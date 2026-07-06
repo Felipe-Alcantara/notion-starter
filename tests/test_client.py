@@ -69,6 +69,20 @@ def test_get_database_ok():
 
 
 @responses.activate
+def test_obter_pagina_ok():
+    responses.add(
+        responses.GET,
+        f"{NOTION_BASE_URL}/pages/page1",
+        json={"id": "page1", "properties": {"Nome": {"type": "title", "title": []}}},
+        status=200,
+    )
+    client = criar_client()
+    data = client.obter_pagina("page1")
+    assert data["id"] == "page1"
+    assert data["properties"]["Nome"]["type"] == "title"
+
+
+@responses.activate
 def test_criar_pagina_envia_payload_esperado():
     responses.add(
         responses.POST,

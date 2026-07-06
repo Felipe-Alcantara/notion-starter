@@ -869,6 +869,26 @@ class NotionClient:
 
         return resposta
 
+    def obter_pagina(self, page_id: str) -> dict[str, Any]:
+        """Busca uma página existente pelo ID.
+
+        A resposta traz cada propriedade já com o seu ``type``, o que permite
+        editar valores sem consultar o schema do database à parte.
+
+        Args:
+            page_id: ID da página.
+
+        Returns:
+            A resposta JSON da página.
+        """
+
+        limpo = _validar_identificador(page_id, "page_id")
+        return self._request_json(
+            method="GET",
+            path=f"/pages/{limpo}",
+            idempotente=True,
+        )
+
     def atualizar_pagina(
         self,
         page_id: str,
