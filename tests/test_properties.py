@@ -13,6 +13,30 @@ def test_rich_text():
     assert p.rich_text("corpo") == {"rich_text": [{"text": {"content": "corpo"}}]}
 
 
+def test_rich_text_fatia_texto_acima_de_2000():
+    valor = "a" * 4500
+    itens = p.rich_text(valor)["rich_text"]
+    assert len(itens) == 3  # 2000 + 2000 + 500
+    assert [len(i["text"]["content"]) for i in itens] == [2000, 2000, 500]
+    assert "".join(i["text"]["content"] for i in itens) == valor
+
+
+def test_title_fatia_texto_longo():
+    itens = p.title("b" * 2001)["title"]
+    assert [len(i["text"]["content"]) for i in itens] == [2000, 1]
+
+
+def test_texto_vazio_gera_item_unico_vazio():
+    assert p.title("") == {"title": [{"text": {"content": ""}}]}
+    assert p.rich_text("") == {"rich_text": [{"text": {"content": ""}}]}
+
+
+def test_emoji_conta_como_duas_unidades_utf16():
+    # 1000 emojis fora do BMP = 2000 unidades UTF-16 → cabe em um item; +1 estoura.
+    itens = p.rich_text("😀" * 1001)["rich_text"]
+    assert len(itens) == 2
+
+
 def test_email_phone_url_number_checkbox():
     assert p.email("a@b.com") == {"email": "a@b.com"}
     assert p.phone_number("+55 11") == {"phone_number": "+55 11"}

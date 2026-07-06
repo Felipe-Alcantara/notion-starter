@@ -19,20 +19,35 @@ from __future__ import annotations
 import datetime as _dt
 from typing import Any
 
+from .constants import MAX_RICH_TEXT
+from .utils import fatiar_utf16
+
 NotionPropertyValue = dict[str, Any]
 NotionProperties = dict[str, NotionPropertyValue]
 
 
-def title(valor: str) -> NotionPropertyValue:
-    """Monta um valor de propriedade ``title``."""
+def _itens_texto(valor: str) -> list[dict[str, Any]]:
+    """Fatia ``valor`` em itens de texto de até 2000 unidades UTF-16.
 
-    return {"title": [{"text": {"content": valor}}]}
+    Título e rich_text têm o mesmo teto por item; texto maior vira vários itens,
+    que o Notion concatena no mesmo campo. Texto vazio produz um item vazio, para
+    manter o comportamento simples de quem passa ``""``.
+    """
+
+    fatias = fatiar_utf16(valor, MAX_RICH_TEXT) or [""]
+    return [{"text": {"content": pedaco}} for pedaco in fatias]
+
+
+def title(valor: str) -> NotionPropertyValue:
+    """Monta um valor de propriedade ``title`` (fatiando texto longo)."""
+
+    return {"title": _itens_texto(valor)}
 
 
 def rich_text(valor: str) -> NotionPropertyValue:
-    """Monta um valor de propriedade ``rich_text``."""
+    """Monta um valor de propriedade ``rich_text`` (fatiando texto longo)."""
 
-    return {"rich_text": [{"text": {"content": valor}}]}
+    return {"rich_text": _itens_texto(valor)}
 
 
 def email(valor: str) -> NotionPropertyValue:

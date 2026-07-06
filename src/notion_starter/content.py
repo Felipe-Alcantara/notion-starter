@@ -30,6 +30,9 @@ import html as _html
 import re
 from typing import Any
 
+from .constants import MAX_RICH_TEXT
+from .utils import fatiar_utf16
+
 # Tipos de bloco do Notion que carregam *rich text* num campo de mesmo nome.
 _TIPOS_TEXTO = (
     "paragraph",
@@ -93,32 +96,6 @@ def _normalizar_linguagem(lingua: str) -> str:
     return _ALIAS_LINGUAGEM.get(chave, "plain text")
 
 
-# O Notion limita o conteúdo de cada item de rich_text a 2000 "caracteres",
-# contados em unidades de código UTF-16: um caractere fora do BMP (ex.: emoji)
-# ocupa 2 unidades. Por isso o corte é feito por contagem UTF-16, não por
-# len() (code points), senão texto com emoji estoura o limite.
-_MAX_RICH_TEXT = 2000
-
-
-def _fatiar_utf16(texto: str, limite: int) -> list[str]:
-    """Fatia ``texto`` em pedaços de no máximo ``limite`` unidades UTF-16."""
-
-    pedacos: list[str] = []
-    atual: list[str] = []
-    custo = 0
-    for ch in texto:
-        # Caracteres acima de U+FFFF usam um par substituto (2 unidades UTF-16).
-        peso = 2 if ord(ch) > 0xFFFF else 1
-        if custo + peso > limite and atual:
-            pedacos.append("".join(atual))
-            atual, custo = [], 0
-        atual.append(ch)
-        custo += peso
-    if atual:
-        pedacos.append("".join(atual))
-    return pedacos
-
-
 def _item_texto(
     content: str,
     *,
@@ -146,7 +123,7 @@ def _fatiar_item(item: dict[str, Any]) -> list[dict[str, Any]]:
     content = item.get("text", {}).get("content", "")
     if not content:
         return [item]
-    fatias = _fatiar_utf16(content, _MAX_RICH_TEXT)
+    fatias = fatiar_utf16(content, MAX_RICH_TEXT)
     if len(fatias) == 1:
         return [item]
     annotations = item.get("annotations")
@@ -177,7 +154,7 @@ def _codigo_inline(texto: str) -> list[dict[str, Any]]:
     if not texto:
         return []
     itens: list[dict[str, Any]] = []
-    for pedaco in _fatiar_utf16(texto, _MAX_RICH_TEXT):
+    for pedaco in fatiar_utf16(texto, MAX_RICH_TEXT):
         itens.append(_item_texto(pedaco))
     return itens
 

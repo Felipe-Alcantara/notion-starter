@@ -6,6 +6,31 @@ import json
 from typing import Any
 
 
+def fatiar_utf16(texto: str, limite: int) -> list[str]:
+    """Fatia ``texto`` em pedaços de no máximo ``limite`` unidades UTF-16.
+
+    O Notion conta o comprimento de rich_text em unidades UTF-16: um caractere
+    fora do BMP (ex.: emoji) ocupa 2 unidades. Por isso o corte é feito por
+    contagem UTF-16, não por ``len()`` (code points), senão texto com emoji
+    estouraria o limite da API. Texto vazio devolve lista vazia.
+    """
+
+    pedacos: list[str] = []
+    atual: list[str] = []
+    custo = 0
+    for ch in texto:
+        # Caracteres acima de U+FFFF usam um par substituto (2 unidades UTF-16).
+        peso = 2 if ord(ch) > 0xFFFF else 1
+        if custo + peso > limite and atual:
+            pedacos.append("".join(atual))
+            atual, custo = [], 0
+        atual.append(ch)
+        custo += peso
+    if atual:
+        pedacos.append("".join(atual))
+    return pedacos
+
+
 def has_invalid_surrogates(text: str) -> bool:
     """Verifica se uma string contém surrogates Unicode inválidos.
 
