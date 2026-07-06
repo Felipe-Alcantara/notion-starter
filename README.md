@@ -6,12 +6,13 @@ Biblioteca Python para operar a **API oficial do Notion** com segurança e resil
 
 ## O que ela oferece
 
-- **`NotionClient`** — cliente HTTP resiliente (retries, rate limit, erros tipados)
+- **`NotionClient`** — cliente HTTP resiliente (retries, rate limit, erros tipados); inclui `obter_pagina` e `atualizar_pagina` para ler e editar propriedades de uma página
 - **Schema** — leitura e comparação de schemas de databases (`comparar_schema`)
 - **Tarefas** — modelo `Tarefa`/`TaskList` para criar, editar, mover e concluir tarefas
 - **Conteúdo** — leitura e escrita de blocos de páginas
+- **Propriedades** — builders `properties.*` (title, rich_text, select, status, number, date, relation…); `title`/`rich_text` fatiam texto acima de 2000 unidades UTF-16 automaticamente
 - **Inventário** — varredura do workspace (páginas, databases, árvore)
-- **Utilidades** — saneamento de texto/JSON (surrogates inválidos), logging, properties e readers
+- **Utilidades** — saneamento de texto/JSON (surrogates inválidos), `fatiar_utf16`, logging e readers
 
 ## Instalação
 
