@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "notion-starter"
-version = "0.1.1"
+version = "0.1.2"
 description = "Biblioteca Python para operar a API oficial do Notion: cliente resiliente, schema, tarefas, conteúdo e inventário."
 readme = "README.md"
 requires-python = ">=3.10"

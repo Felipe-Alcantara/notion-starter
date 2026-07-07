@@ -11,12 +11,16 @@ Biblioteca Python **base** do ecossistema [Automações do Notion](https://githu
 | `src/notion_starter/tasks.py` | `Tarefa`, `TaskList`, `CamposTarefa` |
 | `src/notion_starter/content.py` + `properties.py` + `readers.py` | Conversão Markdown ↔ blocos (lógica pura); `properties.title`/`rich_text` fatiam texto >2000 (via `utils.fatiar_utf16`) |
 | `src/notion_starter/inventory.py` | Mapeamento do workspace (lógica pura, sem rede) |
+| `src/notion_starter/github.py`, `openrouter.py` | Adaptadores externos compartilhados por CLI e app |
+| `src/notion_starter/services/` | Casos de uso compartilhados entre CLI e app; defaults de ambiente continuam nos consumidores via `integrations.notion` |
 | `src/notion_starter/utils.py` | Saneamento de texto/JSON (surrogates inválidos); `fatiar_utf16` (fatia por unidades UTF-16, teto em `constants.MAX_RICH_TEXT`) |
 | `examples/` | Scripts de uso direto da lib |
 
 ## Regras
 
-- **Nenhuma regra de negócio de produto aqui** — isso pertence à camada `services` dos repos consumidores (`notion-tasks-cli`, `notion-workspace-app`).
+- Regra de negócio compartilhada entre CLI e app pode viver em `notion_starter.services`.
+  Bordas e configuração de ambiente continuam fora daqui (`cli/`, `api/`, `mcp_server`,
+  `integrations.notion` dos consumidores).
 - Só o `NotionClient` fala com a API do Notion; módulos de lógica são puros.
 - Código e mensagens em português; exceções derivam de `NotionSyncError`; Conventional Commits.
 - **Mudança de API pública quebra dois repos consumidores** — mantenha compatibilidade ou avise nos dois.

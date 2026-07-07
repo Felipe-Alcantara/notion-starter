@@ -2,6 +2,11 @@
 
 Biblioteca Python para operar a **API oficial do Notion** com segurança e resiliência. É o núcleo do ecossistema de automações do Notion — os demais módulos ([notion-tasks-cli](https://github.com/Felipe-Alcantara/notion-tasks-cli), [notion-workspace-app](https://github.com/Felipe-Alcantara/notion-workspace-app)) constroem em cima dela.
 
+Além do cliente base, este repo concentra a camada compartilhada entre CLI e app:
+adaptadores GitHub/OpenRouter e `notion_starter.services` (tarefas, conteúdo,
+clonagem, ingestão, inventário GitHub e IA). As bordas e configuração de ambiente
+continuam nos consumidores.
+
 > Parte do ecossistema [Automações do Notion](https://github.com/Felipe-Alcantara/Automa-es-do-Notion).
 
 ## O que ela oferece
