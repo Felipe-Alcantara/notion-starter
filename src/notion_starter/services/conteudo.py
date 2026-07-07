@@ -24,6 +24,10 @@ from notion_starter import (
     markdown_para_blocos,
 )
 
+# Tamanho do trecho de texto mostrado ao listar blocos. O bastante para
+# reconhecer o bloco (e casar com o que se lê na página) sem poluir a saída.
+_LARGURA_PREVIEW = 100
+
 # O Notion aceita no máximo 100 blocos filhos por requisição de append. O limite
 # de 2000 caracteres por item de rich_text já é tratado na lib (fatiamento em
 # ``content.py``); aqui cuidamos do limite de blocos por requisição.
@@ -98,22 +102,77 @@ def ler_pagina_ou_database(
     return {"id": page_id, "tipo": "pagina", "markdown": ""}
 
 
+def _preview_bloco(bloco: dict[str, Any]) -> str:
+    """Resume um bloco numa linha curta, para identificá-lo ao listar.
+
+    Reaproveita ``blocos_para_markdown`` (a mesma leitura de ``conteudo``) e
+    colapsa quebras/espaços numa linha só, truncando com reticências. Assim o
+    texto do preview casa com o que a pessoa/IA leu na página.
+    """
+
+    md = blocos_para_markdown([bloco])
+    linha = " ".join(md.split())
+    if len(linha) > _LARGURA_PREVIEW:
+        return linha[: _LARGURA_PREVIEW - 1].rstrip() + "…"
+    return linha
+
+
+def listar_blocos(
+    page_id: str,
+    *,
+    cliente: NotionClient | None = None,
+) -> list[dict[str, str]]:
+    """Lista os blocos de topo de uma página com **ID**, tipo e um preview.
+
+    É o par que faltava para ``editar-bloco``/``apagar-bloco``: ``conteudo`` lê o
+    corpo como Markdown, mas descarta os IDs — sem eles não dá para editar nem
+    apagar um bloco específico. Esta função devolve cada bloco de topo já com o
+    ``id`` pronto para essas operações. Lê só um nível (os blocos que se apagam/
+    editam diretamente); o conteúdo dentro de colunas/toggles não é expandido.
+
+    Args:
+        page_id: ID da página (ou bloco) cujos filhos serão listados.
+        cliente: Cliente Notion opcional (injeção para testes/uso alternativo).
+
+    Returns:
+        Lista de ``{"id", "tipo", "preview"}`` — uma entrada por bloco de topo,
+        na ordem em que aparecem na página.
+    """
+
+    blocos = (cliente or _cliente_padrao()).ler_blocos(page_id, buscar_todos=True)
+    return [
+        {
+            "id": bloco.get("id", ""),
+            "tipo": bloco.get("type", ""),
+            "preview": _preview_bloco(bloco),
+        }
+        for bloco in blocos
+    ]
+
+
 def escrever_conteudo(
     page_id: str,
     markdown: str,
     *,
+    substituir: bool = False,
     cliente: NotionClient | None = None,
 ) -> int:
     """Anexa conteúdo (em Markdown) ao **final** de uma página.
 
-    O conteúdo já existente é preservado: os novos blocos entram depois dele. O
-    envio é feito em lotes de até 100 blocos (limite do Notion por requisição) e,
-    quando a API informa os blocos criados, confirma-se que a quantidade criada
-    bate com a enviada — assim uma escrita parcial não passa despercebida.
+    Por padrão **anexa**: o conteúdo já existente é preservado e os novos blocos
+    entram depois dele. Com ``substituir=True``, o corpo atual é apagado antes de
+    escrever — a página fica exatamente com o Markdown informado (útil para
+    corrigir/reescrever sem ir empilhando blocos a cada tentativa). O Markdown é
+    validado **antes** de apagar, então uma entrada vazia nunca zera a página.
+
+    O envio é feito em lotes de até 100 blocos (limite do Notion por requisição)
+    e, quando a API informa os blocos criados, confirma-se que a quantidade
+    criada bate com a enviada — assim uma escrita parcial não passa despercebida.
 
     Args:
         page_id: ID da página (ou bloco) que receberá o conteúdo.
         markdown: Texto em Markdown a anexar.
+        substituir: Quando verdadeiro, apaga o corpo atual antes de escrever.
         cliente: Cliente Notion opcional (injeção para testes/uso alternativo).
 
     Returns:
@@ -129,6 +188,9 @@ def escrever_conteudo(
         raise ValueError("O conteúdo está vazio — nada a escrever.")
 
     cliente = cliente or _cliente_padrao()
+    if substituir:
+        # Validar (acima) antes de apagar: entrada inválida nunca zera a página.
+        limpar_conteudo(page_id, cliente=cliente)
     criados = 0
     for inicio in range(0, len(blocos), _MAX_BLOCOS_POR_REQUISICAO):
         lote = blocos[inicio : inicio + _MAX_BLOCOS_POR_REQUISICAO]
@@ -193,6 +255,36 @@ def excluir_bloco(
     """
 
     return (cliente or _cliente_padrao()).excluir_bloco(block_id)
+
+
+def limpar_conteudo(
+    page_id: str,
+    *,
+    cliente: NotionClient | None = None,
+) -> int:
+    """Apaga **todos** os blocos de topo de uma página. Destrutivo — confirme antes.
+
+    Zera o corpo da página num passo só, em vez de exigir apagar bloco a bloco
+    pelo ID. É o que destrava corrigir uma página que virou bagunça: limpar e
+    reescrever, sem ficar empilhando conteúdo. Como o Notion arquiva (não deleta
+    de vez), os blocos ficam recuperáveis pela lixeira.
+
+    Args:
+        page_id: ID da página (ou bloco) cujo corpo será apagado.
+        cliente: Cliente Notion opcional (injeção para testes/uso alternativo).
+
+    Returns:
+        A quantidade de blocos apagados.
+    """
+
+    cli = cliente or _cliente_padrao()
+    apagados = 0
+    for bloco in cli.ler_blocos(page_id, buscar_todos=True):
+        block_id = bloco.get("id")
+        if block_id:
+            cli.excluir_bloco(block_id)
+            apagados += 1
+    return apagados
 
 
 def buscar(
