@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from notion_starter.github import RepoInfo
-
 from notion_starter import NotionClient
+from notion_starter.github import RepoInfo
 from notion_starter.services.sincronizar_github import CamposProjeto, _propriedades_pagina
 
 

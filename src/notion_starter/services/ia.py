@@ -21,9 +21,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from notion_starter.openrouter import ProvedorIA
-
 from notion_starter import Tarefa, TaskList
+from notion_starter.openrouter import ProvedorIA
 
 # ---------------------------------------------------------------------------
 # Objeto de domínio: ação sugerida

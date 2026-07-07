@@ -49,7 +49,7 @@ from .schema import (
 )
 from .tasks import CamposTarefa, Tarefa, TaskList, tarefa_de_pagina
 
-__version__ = "0.1.0"
+__version__ = "0.1.3"
 
 __all__ = [
     "NotionClient",

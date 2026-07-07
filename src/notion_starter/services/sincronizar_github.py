@@ -6,9 +6,8 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from notion_starter.github import GitHubClient, RepoInfo
-
 from notion_starter import NotionClient, TaskList, properties
+from notion_starter.github import GitHubClient, RepoInfo
 
 
 @dataclass(frozen=True)

@@ -30,9 +30,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from notion_starter.github import GitHubClient, RepoInfo
-
 from notion_starter import NotionClient, properties
+from notion_starter.github import GitHubClient, RepoInfo
 from notion_starter.readers import ler_date, ler_rich_text
 
 # Limite defensivo do tamanho do README importado (Markdown bruto).

@@ -4,8 +4,8 @@ Biblioteca Python para operar a **API oficial do Notion** com segurança e resil
 
 Além do cliente base, este repo concentra a camada compartilhada entre CLI e app:
 adaptadores GitHub/OpenRouter e `notion_starter.services` (tarefas, conteúdo,
-clonagem, ingestão, inventário GitHub e IA). As bordas e configuração de ambiente
-continuam nos consumidores.
+clonagem, ingestão, inventário GitHub, exportação DOCX de relatórios e IA). As
+bordas e configuração de ambiente continuam nos consumidores.
 
 > Parte do ecossistema [Automações do Notion](https://github.com/Felipe-Alcantara/Automa-es-do-Notion).
 
@@ -17,6 +17,7 @@ continuam nos consumidores.
 - **Conteúdo** — leitura e escrita de blocos de páginas
 - **Propriedades** — builders `properties.*` (title, rich_text, select, status, number, date, relation…); `title`/`rich_text` fatiam texto acima de 2000 unidades UTF-16 automaticamente
 - **Inventário** — varredura do workspace (páginas, databases, árvore)
+- **Relatórios DOCX** — `notion_starter.services.relatorios_docx` exporta relatórios diários do Notion para `.docx`, um arquivo por data, juntando propriedades e corpo sem arquivos intermediários
 - **Utilidades** — saneamento de texto/JSON (surrogates inválidos), `fatiar_utf16`, logging e readers
 
 ## Instalação
