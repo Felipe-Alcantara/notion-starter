@@ -61,6 +61,11 @@ def _texto_docx(caminho: Path) -> str:
     return "\n".join(paragrafos + tabelas)
 
 
+def _estilos_docx(caminho: Path) -> list[str]:
+    doc = Document(caminho)
+    return [p.style.name for p in doc.paragraphs if p.text.strip() and p.style is not None]
+
+
 def test_exporta_intervalo_lendo_propriedades_e_corpo(tmp_path: Path):
     cliente = FakeClient()
 
@@ -86,6 +91,8 @@ def test_exporta_intervalo_lendo_propriedades_e_corpo(tmp_path: Path):
     assert "Relatorio 06" in texto
     assert "Resumo executivo" in texto
     assert "Texto do corpo" in texto
+    assert "Sumario" not in texto
+    assert "Relatorio completo" not in texto
 
 
 def test_renderizador_converte_markdown_basico_para_docx(tmp_path: Path):
@@ -95,8 +102,14 @@ def test_renderizador_converte_markdown_basico_para_docx(tmp_path: Path):
         caminho,
         titulo="Relatorio exemplo",
         data_relatorio="2026-07-06",
-        propriedades={"Data": "2026-07-06", "Bloqueios": "Nenhum"},
-        markdown="# Titulo\n\n- item **forte**\n\n| A | B |\n| --- | --- |\n| 1 | 2 |",
+        propriedades={"Data": "2026-07-06", "Status": "Concluido", "Bloqueios": "Nenhum"},
+        markdown=(
+            "# Titulo\n\n"
+            "## Linha do Tempo\n\n"
+            "- 09:55 - item **forte**\n"
+            "- 10:27 - segunda entrega\n\n"
+            "| A | B |\n| --- | --- |\n| 1 | 2 |"
+        ),
     )
 
     texto = _texto_docx(caminho)
@@ -105,6 +118,10 @@ def test_renderizador_converte_markdown_basico_para_docx(tmp_path: Path):
     assert "item forte" in texto
     assert "Nenhum" in texto
     assert "A" in texto and "2" in texto
+    assert "09:55" in texto and "segunda entrega" in texto
+    estilos = _estilos_docx(caminho)
+    assert "Title" not in estilos
+    assert "Heading 1" in estilos
 
 
 def test_periodo_invertido_falha(tmp_path: Path):

@@ -16,7 +16,6 @@ from typing import Any
 
 try:  # pragma: no cover - coberto indiretamente nos ambientes com dependencia.
     from docx import Document
-    from docx.enum.section import WD_SECTION_START
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.shared import Inches, Pt, RGBColor
 except ImportError as exc:  # pragma: no cover
@@ -42,7 +41,7 @@ PROPRIEDADES_DESTAQUE_PADRAO = (
 )
 
 SECOES_DESTAQUE = (
-    ("Resumo", ("Resumo",)),
+    ("Resumo do Dia", ("Resumo",)),
     ("Bloqueios", ("Bloqueios",)),
     ("Proximos passos", ("Proximos passos", "Próximos passos")),
 )
@@ -166,8 +165,7 @@ def renderizar_docx(
     documento = Document()
     _configurar_documento(documento)
     _adicionar_capa(documento, titulo, data_relatorio, propriedades)
-    _adicionar_sumario_manual(documento)
-    _adicionar_tabela_propriedades(documento, propriedades, propriedades_destaque)
+    _adicionar_tabela_metadados(documento, propriedades, propriedades_destaque)
     _adicionar_secoes_destaque(documento, propriedades)
     _adicionar_markdown(documento, markdown)
 
@@ -187,7 +185,7 @@ def _configurar_documento(documento: Any) -> None:
     styles = documento.styles
     styles["Normal"].font.name = "Aptos"
     styles["Normal"].font.size = Pt(10.5)
-    for style_name, size in (("Title", 24), ("Heading 1", 17), ("Heading 2", 14)):
+    for style_name, size in (("Title", 20), ("Heading 1", 16), ("Heading 2", 13)):
         styles[style_name].font.name = "Aptos Display"
         styles[style_name].font.size = Pt(size)
         styles[style_name].font.color.rgb = RGBColor(31, 41, 55)
@@ -200,60 +198,50 @@ def _adicionar_capa(
     propriedades: dict[str, Any],
 ) -> None:
     dia = _dia_semana(data_relatorio)
-    p = documento.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run("Relatorio diario")
-    run.bold = True
-    run.font.size = Pt(12)
-    run.font.color.rgb = RGBColor(75, 85, 99)
+    projeto = _primeiro_valor(propriedades, ("Projeto", "Projetos", "Area"))
+    status = _primeiro_valor(propriedades, ("Status",))
+    linhas = [
+        _valor_para_texto(projeto).upper() if projeto else "VITIS SOULS",
+        "Relatorio de Sessao",
+        f"{_data_extenso(data_relatorio)} - {dia}",
+    ]
+    if titulo:
+        linhas.append(titulo)
+    if status:
+        linhas.append(f"Status: {_valor_para_texto(status)}")
 
-    h = documento.add_heading(titulo, level=0)
-    h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for indice, texto in enumerate(linhas):
+        p = documento.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run(texto)
+        run.bold = indice in {0, 1}
+        run.font.size = Pt(14 if indice == 0 else 11)
+        if indice == 0:
+            run.font.color.rgb = RGBColor(31, 41, 55)
 
-    subtitulo = documento.add_paragraph()
-    subtitulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    subtitulo.add_run(f"{data_relatorio} - {dia}").italic = True
-
-    resumo = _primeiro_valor(propriedades, ("Resumo",))
-    if resumo:
-        p_resumo = documento.add_paragraph()
-        p_resumo.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_resumo.add_run(_valor_para_texto(resumo))
-
-    documento.add_section(WD_SECTION_START.NEW_PAGE)
-
-
-def _adicionar_sumario_manual(documento: Any) -> None:
-    documento.add_heading("Sumario", level=1)
-    for item in (
-        "Propriedades",
-        "Resumo",
-        "Bloqueios",
-        "Proximos passos",
-        "Relatorio completo",
-    ):
-        documento.add_paragraph(item, style="List Bullet")
+    documento.add_paragraph()
 
 
-def _adicionar_tabela_propriedades(
+def _adicionar_tabela_metadados(
     documento: Any,
     propriedades: dict[str, Any],
     propriedades_destaque: tuple[str, ...],
 ) -> None:
-    documento.add_heading("Propriedades", level=1)
-    ordenadas = _ordenar_propriedades(propriedades, propriedades_destaque)
-    tabela = documento.add_table(rows=1, cols=2)
+    ocultas = {"Resumo", "Bloqueios", "Proximos passos"}
+    ordenadas = [
+        (nome, valor)
+        for nome, valor in _ordenar_propriedades(propriedades, propriedades_destaque)
+        if nome not in ocultas and _valor_para_texto(valor)
+    ]
+    if not ordenadas:
+        return
+    tabela = documento.add_table(rows=0, cols=2)
     tabela.style = "Table Grid"
-    cabecalho = tabela.rows[0].cells
-    cabecalho[0].text = "Campo"
-    cabecalho[1].text = "Valor"
     for nome, valor in ordenadas:
-        texto = _valor_para_texto(valor)
-        if not texto:
-            continue
         cells = tabela.add_row().cells
         cells[0].text = nome
-        cells[1].text = texto
+        cells[1].text = _valor_para_texto(valor)
+    documento.add_paragraph()
 
 
 def _adicionar_secoes_destaque(documento: Any, propriedades: dict[str, Any]) -> None:
@@ -265,11 +253,11 @@ def _adicionar_secoes_destaque(documento: Any, propriedades: dict[str, Any]) -> 
 
 
 def _adicionar_markdown(documento: Any, markdown: str) -> None:
-    documento.add_heading("Relatorio completo", level=1)
     linhas = markdown.splitlines()
     i = 0
     em_codigo = False
     codigo: list[str] = []
+    titulo_atual = ""
     while i < len(linhas):
         linha = linhas[i]
         if linha.startswith("```"):
@@ -289,7 +277,14 @@ def _adicionar_markdown(documento: Any, markdown: str) -> None:
             bloco, i = _coletar_tabela(linhas, i)
             _adicionar_tabela_markdown(documento, bloco)
             continue
+        if _linha_timeline(linha) and "linha do tempo" in titulo_atual.lower():
+            bloco, i = _coletar_timeline(linhas, i)
+            _adicionar_tabela_timeline(documento, bloco)
+            continue
         _adicionar_linha_markdown(documento, linha)
+        titulo = _titulo_markdown(linha)
+        if titulo:
+            titulo_atual = titulo
         i += 1
     if codigo:
         _adicionar_codigo(documento, "\n".join(codigo))
@@ -390,6 +385,51 @@ def _adicionar_tabela_markdown(documento: Any, linhas: list[str]) -> None:
         cells = tabela.add_row().cells
         for idx, valor in enumerate(linha[: len(cells)]):
             cells[idx].text = valor
+    documento.add_paragraph()
+
+
+def _titulo_markdown(linha: str) -> str:
+    texto = linha.strip()
+    if texto.startswith("# "):
+        return texto[2:].strip()
+    if texto.startswith("## "):
+        return texto[3:].strip()
+    if texto.startswith("### "):
+        return texto[4:].strip()
+    return ""
+
+
+def _linha_timeline(linha: str) -> bool:
+    texto = linha.strip()
+    return bool(re.match(r"^[-*]\s+\d{1,2}:\d{2}(?:[–-]\d{1,2}:\d{2})?\s+[-–—:]\s+", texto))
+
+
+def _coletar_timeline(linhas: list[str], inicio: int) -> tuple[list[tuple[str, str]], int]:
+    bloco: list[tuple[str, str]] = []
+    i = inicio
+    while i < len(linhas) and _linha_timeline(linhas[i]):
+        texto = re.sub(r"^[-*]\s+", "", linhas[i].strip())
+        match = re.match(r"^(\d{1,2}:\d{2}(?:[–-]\d{1,2}:\d{2})?)\s+[-–—:]\s+(.+)$", texto)
+        if match:
+            bloco.append((match.group(1), match.group(2)))
+        i += 1
+    return bloco, i
+
+
+def _adicionar_tabela_timeline(documento: Any, linhas: list[tuple[str, str]]) -> None:
+    for horario, descricao in linhas:
+        tabela = documento.add_table(rows=1, cols=2)
+        tabela.style = "Table Grid"
+        cells = tabela.rows[0].cells
+        cells[0].text = horario
+        cells[1].text = _texto_sem_marcacao_inline(descricao)
+    documento.add_paragraph()
+
+
+def _texto_sem_marcacao_inline(texto: str) -> str:
+    texto = re.sub(r"\*\*([^*]+)\*\*", r"\1", texto)
+    texto = re.sub(r"`([^`]+)`", r"\1", texto)
+    return texto
 
 
 def _parse_data(valor: str, campo: str) -> date:
@@ -468,3 +508,22 @@ def _dia_semana(data_iso: str) -> str:
         "domingo",
     )
     return nomes[datetime.fromisoformat(data_iso[:10]).weekday()]
+
+
+def _data_extenso(data_iso: str) -> str:
+    meses = (
+        "janeiro",
+        "fevereiro",
+        "marco",
+        "abril",
+        "maio",
+        "junho",
+        "julho",
+        "agosto",
+        "setembro",
+        "outubro",
+        "novembro",
+        "dezembro",
+    )
+    data = datetime.fromisoformat(data_iso[:10])
+    return f"{data.day:02d} de {meses[data.month - 1]} de {data.year}"
