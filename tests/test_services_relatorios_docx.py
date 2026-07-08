@@ -167,6 +167,46 @@ def test_metadados_nao_repetem_titulo_nem_secoes_de_destaque(tmp_path: Path):
     assert "Resumo executivo" in texto
 
 
+def test_propriedade_longa_vira_secao_em_vez_de_celula(tmp_path: Path):
+    caminho = tmp_path / "longa.docx"
+    longa = "- Primeira entrega do dia\n- Segunda entrega do dia"
+
+    renderizar_docx(
+        caminho,
+        titulo="Relatorio exemplo",
+        data_relatorio="2026-07-07",
+        propriedades={"Data": "2026-07-07", "O que fiz": longa},
+        markdown="# Corpo",
+    )
+
+    doc = Document(caminho)
+    celulas = [c.text for t in doc.tables for r in t.rows for c in r.cells]
+    assert not any("Primeira entrega" in c for c in celulas)
+    titulos_h1 = [
+        p.text for p in doc.paragraphs if p.style is not None and p.style.name == "Heading 1"
+    ]
+    assert any(t.endswith("O que fiz") for t in titulos_h1)
+    assert "Primeira entrega do dia" in _texto_docx(caminho)
+
+
+def test_titulos_de_nivel_1_sao_numerados_sem_duplicar(tmp_path: Path):
+    caminho = tmp_path / "numeracao.docx"
+
+    renderizar_docx(
+        caminho,
+        titulo="Relatorio exemplo",
+        data_relatorio="2026-07-07",
+        propriedades={"Data": "2026-07-07", "Resumo": "Resumo executivo"},
+        markdown="# Corpo\n\n# 9. Ja numerado",
+    )
+
+    doc = Document(caminho)
+    titulos_h1 = [
+        p.text for p in doc.paragraphs if p.style is not None and p.style.name == "Heading 1"
+    ]
+    assert titulos_h1 == ["1. Resumo do Dia", "2. Corpo", "9. Ja numerado"]
+
+
 def test_identidade_visual_segue_os_exemplos(tmp_path: Path):
     caminho = tmp_path / "visual.docx"
 

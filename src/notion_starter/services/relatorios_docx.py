@@ -4,6 +4,12 @@ O caso de uso junta propriedades e corpo da pagina numa unica passada: consulta
 o database por periodo, le os blocos de cada relatorio como Markdown e renderiza
 um arquivo DOCX profissional por dia. A borda CLI/API deve apenas resolver
 parametros; a regra de negocio fica aqui.
+
+Limite conhecido: o renderer reproduz a identidade visual dos DOCXs de exemplo
+(fontes, cores, tabelas com cabecalho e zebra, capa hierarquizada), mas a
+geracao e programatica — o acabamento fino de um documento diagramado a mao
+(callouts coloridos, larguras por conteudo, quebras de pagina) pode exigir
+ajuste manual no Word depois de exportar.
 """
 
 from __future__ import annotations
@@ -45,6 +51,12 @@ _FILL_CHAVE = "D5E8F0"
 _FILL_ZEBRA = "F2F2F2"
 _FILL_CODIGO = "F2F2F2"
 
+# Largura util de uma pagina A4 (21cm) com as margens laterais de 2.2cm.
+_LARGURA_UTIL_CM = 16.6
+# Valores de propriedade maiores que isso (ou com quebras de linha) ficam
+# ilegiveis dentro de uma celula; viram secao propria, como nos exemplos.
+_LIMITE_METADADO = 160
+
 PROPRIEDADES_DESTAQUE_PADRAO = (
     "Data",
     "Status",
@@ -73,6 +85,19 @@ class RelatorioDocxExportado:
     titulo: str
     data: str
     arquivo: str
+
+
+@dataclass
+class _NumeradorSecoes:
+    """Numera os titulos de nivel 1 na ordem do documento ("1. Resumo do Dia"),
+    como nos DOCXs de exemplo. Titulos que ja chegam numerados nao ganham
+    prefixo duplicado."""
+
+    atual: int = 0
+
+    def proximo(self) -> int:
+        self.atual += 1
+        return self.atual
 
 
 def exportar_relatorios_docx(
@@ -181,13 +206,16 @@ def renderizar_docx(
     """Renderiza um relatorio ja carregado em um arquivo DOCX."""
 
     documento = Document()
+    numerador = _NumeradorSecoes()
+    curtos, longos = _separar_metadados(propriedades, propriedades_destaque, titulo)
     _configurar_documento(documento)
     _adicionar_capa(documento, titulo, data_relatorio, propriedades)
-    _adicionar_tabela_metadados(
-        documento, propriedades, propriedades_destaque, titulo=titulo
-    )
-    _adicionar_secoes_destaque(documento, propriedades)
-    _adicionar_markdown(documento, markdown)
+    _adicionar_tabela_metadados(documento, curtos)
+    _adicionar_secoes_destaque(documento, propriedades, numerador)
+    for nome, texto in longos:
+        _adicionar_h1(documento, nome, numerador)
+        _adicionar_markdown(documento, texto, numerador)
+    _adicionar_markdown(documento, markdown, numerador)
 
     destino = Path(caminho)
     destino.parent.mkdir(parents=True, exist_ok=True)
@@ -240,7 +268,20 @@ def _sombrear_celula(celula: Any, fill: str) -> None:
     celula._tc.get_or_add_tcPr().append(shd)
 
 
-def _bordas_tabela(tabela: Any) -> None:
+def _configurar_tabela(tabela: Any, *, layout_fixo: bool = False) -> None:
+    """Aplica o acabamento comum: largura total, bordas finas e respiro interno.
+
+    Os elementos entram no ``tblPr`` na ordem que o schema OOXML exige
+    (``tblW`` → ``tblBorders`` → ``tblLayout`` → ``tblCellMar``).
+    """
+
+    tbl_pr = tabela._tbl.tblPr
+
+    largura = OxmlElement("w:tblW")
+    largura.set(qn("w:w"), "5000")
+    largura.set(qn("w:type"), "pct")
+    tbl_pr.append(largura)
+
     borders = OxmlElement("w:tblBorders")
     for lado in ("top", "left", "bottom", "right", "insideH", "insideV"):
         borda = OxmlElement(f"w:{lado}")
@@ -248,7 +289,27 @@ def _bordas_tabela(tabela: Any) -> None:
         borda.set(qn("w:sz"), "4")
         borda.set(qn("w:color"), "BFBFBF")
         borders.append(borda)
-    tabela._tbl.tblPr.append(borders)
+    tbl_pr.append(borders)
+
+    if layout_fixo:
+        layout = OxmlElement("w:tblLayout")
+        layout.set(qn("w:type"), "fixed")
+        tbl_pr.append(layout)
+
+    margens = OxmlElement("w:tblCellMar")
+    for lado, valor in (("top", "40"), ("left", "100"), ("bottom", "40"), ("right", "100")):
+        el = OxmlElement(f"w:{lado}")
+        el.set(qn("w:w"), valor)
+        el.set(qn("w:type"), "dxa")
+        margens.append(el)
+    tbl_pr.append(margens)
+
+
+def _larguras_duas_colunas(tabela: Any, primeira_cm: float) -> None:
+    segunda = Cm(_LARGURA_UTIL_CM - primeira_cm)
+    for row in tabela.rows:
+        row.cells[0].width = Cm(primeira_cm)
+        row.cells[1].width = segunda
 
 
 def _texto_celula(
@@ -305,44 +366,69 @@ def _adicionar_capa(
     documento.add_paragraph()
 
 
-def _adicionar_tabela_metadados(
-    documento: Any,
+def _separar_metadados(
     propriedades: dict[str, Any],
     propriedades_destaque: tuple[str, ...],
-    *,
-    titulo: str = "",
-) -> None:
-    # Fora da tabela: propriedades que já viram seção de destaque (nas duas
-    # grafias) e o título, que já aparece na capa — os exemplos não os repetem.
+    titulo: str,
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Divide as propriedades entre tabela de metadados e seções próprias.
+
+    Fora da tabela ficam as propriedades que já viram seção de destaque (nas
+    duas grafias) e o título, que já aparece na capa — os exemplos não os
+    repetem. Valores longos ou com quebras de linha também saem da tabela
+    (uma célula gigante fica ilegível) e viram seção própria no corpo.
+    """
+
     ocultas = {"Resumo", "Bloqueios", "Proximos passos", "Próximos passos"}
-    ordenadas = [
-        (nome, valor)
-        for nome, valor in _ordenar_propriedades(propriedades, propriedades_destaque)
-        if nome not in ocultas
-        and _valor_para_texto(valor)
-        and _valor_para_texto(valor) != titulo
-    ]
-    if not ordenadas:
+    curtos: list[tuple[str, str]] = []
+    longos: list[tuple[str, str]] = []
+    for nome, valor in _ordenar_propriedades(propriedades, propriedades_destaque):
+        texto = _valor_para_texto(valor)
+        if nome in ocultas or not texto or texto == titulo:
+            continue
+        if "\n" in texto or len(texto) > _LIMITE_METADADO:
+            longos.append((nome, texto))
+        else:
+            curtos.append((nome, texto))
+    return curtos, longos
+
+
+def _adicionar_tabela_metadados(documento: Any, metadados: list[tuple[str, str]]) -> None:
+    if not metadados:
         return
     tabela = documento.add_table(rows=0, cols=2)
-    _bordas_tabela(tabela)
-    for nome, valor in ordenadas:
+    _configurar_tabela(tabela, layout_fixo=True)
+    for nome, texto in metadados:
         cells = tabela.add_row().cells
         _texto_celula(cells[0], nome, bold=True, cor=_COR_MARINHO)
         _sombrear_celula(cells[0], _FILL_CHAVE)
-        _texto_celula(cells[1], _valor_para_texto(valor))
+        _texto_celula(cells[1], texto)
+    _larguras_duas_colunas(tabela, 4.2)
     documento.add_paragraph()
 
 
-def _adicionar_secoes_destaque(documento: Any, propriedades: dict[str, Any]) -> None:
+def _adicionar_h1(documento: Any, texto: str, numerador: _NumeradorSecoes) -> None:
+    if re.match(r"^\d+[.)]\s", texto):
+        documento.add_heading(texto, level=1)
+        return
+    documento.add_heading(f"{numerador.proximo()}. {texto}", level=1)
+
+
+def _adicionar_secoes_destaque(
+    documento: Any,
+    propriedades: dict[str, Any],
+    numerador: _NumeradorSecoes,
+) -> None:
     for titulo, nomes in SECOES_DESTAQUE:
         valor = _primeiro_valor(propriedades, nomes)
         if valor:
-            documento.add_heading(titulo, level=1)
-            _adicionar_paragrafos_texto(documento, _valor_para_texto(valor))
+            _adicionar_h1(documento, titulo, numerador)
+            _adicionar_markdown(documento, _valor_para_texto(valor), numerador)
 
 
-def _adicionar_markdown(documento: Any, markdown: str) -> None:
+def _adicionar_markdown(
+    documento: Any, markdown: str, numerador: _NumeradorSecoes
+) -> None:
     linhas = markdown.splitlines()
     i = 0
     em_codigo = False
@@ -371,7 +457,7 @@ def _adicionar_markdown(documento: Any, markdown: str) -> None:
             bloco, i = _coletar_timeline(linhas, i)
             _adicionar_tabela_timeline(documento, bloco)
             continue
-        _adicionar_linha_markdown(documento, linha)
+        _adicionar_linha_markdown(documento, linha, numerador)
         titulo = _titulo_markdown(linha)
         if titulo:
             titulo_atual = titulo
@@ -380,13 +466,15 @@ def _adicionar_markdown(documento: Any, markdown: str) -> None:
         _adicionar_codigo(documento, "\n".join(codigo))
 
 
-def _adicionar_linha_markdown(documento: Any, linha: str) -> None:
+def _adicionar_linha_markdown(
+    documento: Any, linha: str, numerador: _NumeradorSecoes
+) -> None:
     texto = linha.strip()
     if not texto:
         documento.add_paragraph()
         return
     if texto.startswith("# "):
-        documento.add_heading(texto[2:].strip(), level=1)
+        _adicionar_h1(documento, texto[2:].strip(), numerador)
         return
     if texto.startswith("## "):
         documento.add_heading(texto[3:].strip(), level=2)
@@ -446,12 +534,6 @@ def _adicionar_codigo(documento: Any, texto: str) -> None:
     p._p.get_or_add_pPr().append(shd)
 
 
-def _adicionar_paragrafos_texto(documento: Any, texto: str) -> None:
-    for linha in texto.splitlines() or [texto]:
-        if linha.strip():
-            documento.add_paragraph(linha.strip())
-
-
 def _linha_tabela(linha: str) -> bool:
     return linha.strip().startswith("|") and linha.strip().endswith("|")
 
@@ -474,7 +556,7 @@ def _adicionar_tabela_markdown(documento: Any, linhas: list[str]) -> None:
     if not linhas_validas:
         return
     tabela = documento.add_table(rows=0, cols=len(linhas_validas[0]))
-    _bordas_tabela(tabela)
+    _configurar_tabela(tabela)
     for numero, linha in enumerate(linhas_validas):
         cells = tabela.add_row().cells
         for idx, valor in enumerate(linha[: len(cells)]):
@@ -520,11 +602,12 @@ def _coletar_timeline(linhas: list[str], inicio: int) -> tuple[list[tuple[str, s
 def _adicionar_tabela_timeline(documento: Any, linhas: list[tuple[str, str]]) -> None:
     for horario, descricao in linhas:
         tabela = documento.add_table(rows=1, cols=2)
-        _bordas_tabela(tabela)
+        _configurar_tabela(tabela, layout_fixo=True)
         cells = tabela.rows[0].cells
         _texto_celula(cells[0], horario, bold=True, cor=_COR_MARINHO)
         _sombrear_celula(cells[0], _FILL_CHAVE)
         _texto_celula(cells[1], _texto_sem_marcacao_inline(descricao))
+        _larguras_duas_colunas(tabela, 2.8)
     documento.add_paragraph()
 
 
