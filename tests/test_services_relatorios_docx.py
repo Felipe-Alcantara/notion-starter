@@ -167,6 +167,43 @@ def test_metadados_nao_repetem_titulo_nem_secoes_de_destaque(tmp_path: Path):
     assert "Resumo executivo" in texto
 
 
+def test_identidade_visual_segue_os_exemplos(tmp_path: Path):
+    caminho = tmp_path / "visual.docx"
+
+    renderizar_docx(
+        caminho,
+        titulo="Relatorio exemplo",
+        data_relatorio="2026-07-07",
+        propriedades={"Data": "2026-07-07", "Status": "Concluído"},
+        markdown="# Corpo\n\n| A | B |\n| --- | --- |\n| 1 | 2 |",
+    )
+
+    doc = Document(caminho)
+    normal = doc.styles["Normal"]
+    assert normal.font.name == "Arial"
+    assert normal.font.size.pt == 10
+    assert str(normal.font.color.rgb) == "404040"
+    h1 = doc.styles["Heading 1"]
+    assert str(h1.font.color.rgb) == "1B3A5C"
+    assert h1.font.bold is True
+
+    # Capa: projeto grande em marinho e status verde (Concluído).
+    capa = [p for p in doc.paragraphs if p.text.strip()][:5]
+    assert capa[0].runs[0].font.size.pt == 24
+    assert str(capa[0].runs[0].font.color.rgb) == "1B3A5C"
+    status = next(p for p in capa if p.text.startswith("Status:"))
+    assert str(status.runs[0].font.color.rgb) == "1A5C2E"
+
+    # Tabelas: bordas explicitas, chave da tabela de metadados sombreada e
+    # cabecalho da tabela markdown em marinho com texto branco.
+    metadados, markdown_tbl = doc.tables[0], doc.tables[1]
+    assert "tblBorders" in metadados._tbl.xml
+    assert "D5E8F0" in metadados._tbl.xml
+    assert "1B3A5C" in markdown_tbl._tbl.xml
+    cabecalho = markdown_tbl.rows[0].cells[0]
+    assert str(cabecalho.paragraphs[0].runs[0].font.color.rgb) == "FFFFFF"
+
+
 def test_periodo_invertido_falha(tmp_path: Path):
     cliente = FakeClient()
 

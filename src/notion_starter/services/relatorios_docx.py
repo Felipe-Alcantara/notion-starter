@@ -17,7 +17,9 @@ from typing import Any
 try:  # pragma: no cover - coberto indiretamente nos ambientes com dependencia.
     from docx import Document
     from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.shared import Inches, Pt, RGBColor
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from docx.shared import Cm, Inches, Pt, RGBColor
 except ImportError as exc:  # pragma: no cover
     raise RuntimeError(
         "A exportacao DOCX exige a dependencia 'python-docx'. "
@@ -26,6 +28,22 @@ except ImportError as exc:  # pragma: no cover
 
 from notion_starter import readers
 from notion_starter.content import blocos_para_markdown
+
+# Identidade visual extraida dos DOCXs de exemplo anexados na task de origem
+# (relatorios de 2026-04-22 a 2026-05-01): Arial no corpo, azul-marinho nos
+# titulos, azul nos subtitulos, texto em cinza-escuro e tabelas com cabecalho
+# preenchido + linhas zebradas.
+_FONTE = "Arial"
+_COR_MARINHO = RGBColor(0x1B, 0x3A, 0x5C)
+_COR_AZUL = RGBColor(0x2E, 0x75, 0xB6)
+_COR_AZUL_ESCURO = RGBColor(0x1F, 0x4D, 0x78)
+_COR_TEXTO = RGBColor(0x40, 0x40, 0x40)
+_COR_DATA = RGBColor(0x59, 0x59, 0x59)
+_COR_VERDE = RGBColor(0x1A, 0x5C, 0x2E)
+_FILL_CABECALHO = "1B3A5C"
+_FILL_CHAVE = "D5E8F0"
+_FILL_ZEBRA = "F2F2F2"
+_FILL_CODIGO = "F2F2F2"
 
 PROPRIEDADES_DESTAQUE_PADRAO = (
     "Data",
@@ -179,18 +197,71 @@ def renderizar_docx(
 
 def _configurar_documento(documento: Any) -> None:
     section = documento.sections[0]
-    section.top_margin = Inches(0.7)
-    section.bottom_margin = Inches(0.7)
-    section.left_margin = Inches(0.8)
-    section.right_margin = Inches(0.8)
+    section.top_margin = Cm(2.5)
+    section.bottom_margin = Cm(2.5)
+    section.left_margin = Cm(2.2)
+    section.right_margin = Cm(2.2)
 
     styles = documento.styles
-    styles["Normal"].font.name = "Aptos"
-    styles["Normal"].font.size = Pt(10.5)
-    for style_name, size in (("Title", 20), ("Heading 1", 16), ("Heading 2", 13)):
-        styles[style_name].font.name = "Aptos Display"
-        styles[style_name].font.size = Pt(size)
-        styles[style_name].font.color.rgb = RGBColor(31, 41, 55)
+    normal = styles["Normal"]
+    normal.font.name = _FONTE
+    normal.font.size = Pt(10)
+    normal.font.color.rgb = _COR_TEXTO
+    normal.paragraph_format.space_before = Pt(3)
+    normal.paragraph_format.space_after = Pt(4)
+
+    headings = (
+        ("Heading 1", 16, _COR_MARINHO, 17, 5),
+        ("Heading 2", 13, _COR_AZUL, 14, 4),
+        ("Heading 3", 12, _COR_AZUL_ESCURO, 10, 3),
+    )
+    for style_name, size, cor, antes, depois in headings:
+        estilo = styles[style_name]
+        estilo.font.name = _FONTE
+        estilo.font.size = Pt(size)
+        estilo.font.bold = True
+        estilo.font.color.rgb = cor
+        estilo.paragraph_format.space_before = Pt(antes)
+        estilo.paragraph_format.space_after = Pt(depois)
+
+    for style_name in ("List Bullet", "List Number"):
+        estilo = styles[style_name]
+        estilo.font.name = _FONTE
+        estilo.font.size = Pt(10)
+        estilo.font.color.rgb = _COR_TEXTO
+        estilo.paragraph_format.space_before = Pt(2)
+        estilo.paragraph_format.space_after = Pt(2)
+
+
+def _sombrear_celula(celula: Any, fill: str) -> None:
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:fill"), fill)
+    celula._tc.get_or_add_tcPr().append(shd)
+
+
+def _bordas_tabela(tabela: Any) -> None:
+    borders = OxmlElement("w:tblBorders")
+    for lado in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        borda = OxmlElement(f"w:{lado}")
+        borda.set(qn("w:val"), "single")
+        borda.set(qn("w:sz"), "4")
+        borda.set(qn("w:color"), "BFBFBF")
+        borders.append(borda)
+    tabela._tbl.tblPr.append(borders)
+
+
+def _texto_celula(
+    celula: Any, texto: str, *, bold: bool = False, cor: RGBColor | None = None
+) -> None:
+    p = celula.paragraphs[0]
+    p.clear()
+    p.paragraph_format.space_before = Pt(2)
+    p.paragraph_format.space_after = Pt(2)
+    run = p.add_run(texto)
+    run.bold = bold
+    if cor is not None:
+        run.font.color.rgb = cor
 
 
 def _adicionar_capa(
@@ -201,25 +272,35 @@ def _adicionar_capa(
 ) -> None:
     dia = _dia_semana(data_relatorio)
     projeto = _primeiro_valor(propriedades, ("Projeto", "Projetos", "Area"))
-    status = _primeiro_valor(propriedades, ("Status",))
-    linhas = [
-        _valor_para_texto(projeto).upper() if projeto else "VITIS SOULS",
-        "Relatório de Sessão",
-        f"{_data_extenso(data_relatorio)}  —  {dia}",
+    status = _valor_para_texto(_primeiro_valor(propriedades, ("Status",)))
+    # (texto, tamanho, cor, negrito) — hierarquia visual dos exemplos: projeto
+    # grande em marinho, subtitulo azul, data em cinza e status em verde quando
+    # concluido.
+    linhas: list[tuple[str, int, RGBColor, bool]] = [
+        (
+            _valor_para_texto(projeto).upper() if projeto else "VITIS SOULS",
+            24,
+            _COR_MARINHO,
+            True,
+        ),
+        ("Relatório de Sessão", 18, _COR_AZUL, False),
+        (f"{_data_extenso(data_relatorio)}  —  {dia}", 13, _COR_DATA, False),
     ]
     if titulo:
-        linhas.append(titulo)
+        linhas.append((titulo, 12, _COR_TEXTO, True))
     if status:
-        linhas.append(f"Status: {_valor_para_texto(status)}")
+        cor_status = _COR_VERDE if status.lower().startswith("conclu") else _COR_DATA
+        linhas.append((f"Status: {status}", 11, cor_status, True))
 
-    for indice, texto in enumerate(linhas):
+    for indice, (texto, tamanho, cor, negrito) in enumerate(linhas):
         p = documento.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_before = Pt(24 if indice == 0 else 2)
+        p.paragraph_format.space_after = Pt(4)
         run = p.add_run(texto)
-        run.bold = indice in {0, 1}
-        run.font.size = Pt(14 if indice == 0 else 11)
-        if indice == 0:
-            run.font.color.rgb = RGBColor(31, 41, 55)
+        run.bold = negrito
+        run.font.size = Pt(tamanho)
+        run.font.color.rgb = cor
 
     documento.add_paragraph()
 
@@ -244,11 +325,12 @@ def _adicionar_tabela_metadados(
     if not ordenadas:
         return
     tabela = documento.add_table(rows=0, cols=2)
-    tabela.style = "Table Grid"
+    _bordas_tabela(tabela)
     for nome, valor in ordenadas:
         cells = tabela.add_row().cells
-        cells[0].text = nome
-        cells[1].text = _valor_para_texto(valor)
+        _texto_celula(cells[0], nome, bold=True, cor=_COR_MARINHO)
+        _sombrear_celula(cells[0], _FILL_CHAVE)
+        _texto_celula(cells[1], _valor_para_texto(valor))
     documento.add_paragraph()
 
 
@@ -358,6 +440,10 @@ def _adicionar_codigo(documento: Any, texto: str) -> None:
     run.font.name = "Consolas"
     run.font.size = Pt(9)
     p.paragraph_format.left_indent = Inches(0.25)
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:fill"), _FILL_CODIGO)
+    p._p.get_or_add_pPr().append(shd)
 
 
 def _adicionar_paragrafos_texto(documento: Any, texto: str) -> None:
@@ -388,11 +474,18 @@ def _adicionar_tabela_markdown(documento: Any, linhas: list[str]) -> None:
     if not linhas_validas:
         return
     tabela = documento.add_table(rows=0, cols=len(linhas_validas[0]))
-    tabela.style = "Table Grid"
-    for linha in linhas_validas:
+    _bordas_tabela(tabela)
+    for numero, linha in enumerate(linhas_validas):
         cells = tabela.add_row().cells
         for idx, valor in enumerate(linha[: len(cells)]):
-            cells[idx].text = valor
+            if numero == 0:
+                # Cabecalho como nos exemplos: fundo marinho e texto branco.
+                _texto_celula(cells[idx], valor, bold=True, cor=RGBColor(0xFF, 0xFF, 0xFF))
+                _sombrear_celula(cells[idx], _FILL_CABECALHO)
+            else:
+                _texto_celula(cells[idx], valor)
+                if numero % 2 == 0:
+                    _sombrear_celula(cells[idx], _FILL_ZEBRA)
     documento.add_paragraph()
 
 
@@ -427,10 +520,11 @@ def _coletar_timeline(linhas: list[str], inicio: int) -> tuple[list[tuple[str, s
 def _adicionar_tabela_timeline(documento: Any, linhas: list[tuple[str, str]]) -> None:
     for horario, descricao in linhas:
         tabela = documento.add_table(rows=1, cols=2)
-        tabela.style = "Table Grid"
+        _bordas_tabela(tabela)
         cells = tabela.rows[0].cells
-        cells[0].text = horario
-        cells[1].text = _texto_sem_marcacao_inline(descricao)
+        _texto_celula(cells[0], horario, bold=True, cor=_COR_MARINHO)
+        _sombrear_celula(cells[0], _FILL_CHAVE)
+        _texto_celula(cells[1], _texto_sem_marcacao_inline(descricao))
     documento.add_paragraph()
 
 
