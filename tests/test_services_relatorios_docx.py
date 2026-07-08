@@ -244,6 +244,27 @@ def test_identidade_visual_segue_os_exemplos(tmp_path: Path):
     assert str(cabecalho.paragraphs[0].runs[0].font.color.rgb) == "FFFFFF"
 
 
+def test_linhas_em_branco_nao_viram_paragrafos_vazios(tmp_path: Path):
+    caminho = tmp_path / "espacamento.docx"
+
+    renderizar_docx(
+        caminho,
+        titulo="Relatorio exemplo",
+        data_relatorio="2026-07-07",
+        propriedades={"Data": "2026-07-07"},
+        markdown="# Corpo\n\nParagrafo um.\n\nParagrafo dois.\n\n- item\n\nParagrafo tres.",
+    )
+
+    doc = Document(caminho)
+    vazios = [p for p in doc.paragraphs if not p.text.strip()]
+    # Sobram apenas os espaçadores compactos (capa e tabela de metadados),
+    # com espaçamento zero e marca de parágrafo reduzida.
+    assert len(vazios) == 2
+    for p in vazios:
+        assert p.paragraph_format.space_after.pt == 0
+        assert "<w:sz w:val=\"8\"/>" in p._p.xml
+
+
 def test_periodo_invertido_falha(tmp_path: Path):
     cliente = FakeClient()
 

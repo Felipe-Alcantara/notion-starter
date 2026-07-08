@@ -312,6 +312,25 @@ def _larguras_duas_colunas(tabela: Any, primeira_cm: float) -> None:
         row.cells[1].width = segunda
 
 
+def _espacador(documento: Any) -> None:
+    """Parágrafo vazio mínimo para separar tabelas do conteúdo seguinte.
+
+    O Word exige um parágrafo entre tabelas adjacentes (senão elas se fundem),
+    mas um parágrafo vazio de altura normal deixava o documento espaçado
+    demais — este tem espaçamento zero e marca de parágrafo de 4pt (a altura
+    de um parágrafo vazio vem da fonte da marca, definida em ``pPr/rPr``).
+    """
+
+    p = documento.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(0)
+    rpr = OxmlElement("w:rPr")
+    sz = OxmlElement("w:sz")
+    sz.set(qn("w:val"), "8")
+    rpr.append(sz)
+    p._p.get_or_add_pPr().append(rpr)
+
+
 def _texto_celula(
     celula: Any, texto: str, *, bold: bool = False, cor: RGBColor | None = None
 ) -> None:
@@ -363,7 +382,7 @@ def _adicionar_capa(
         run.font.size = Pt(tamanho)
         run.font.color.rgb = cor
 
-    documento.add_paragraph()
+    _espacador(documento)
 
 
 def _separar_metadados(
@@ -404,7 +423,7 @@ def _adicionar_tabela_metadados(documento: Any, metadados: list[tuple[str, str]]
         _sombrear_celula(cells[0], _FILL_CHAVE)
         _texto_celula(cells[1], texto)
     _larguras_duas_colunas(tabela, 4.2)
-    documento.add_paragraph()
+    _espacador(documento)
 
 
 def _adicionar_h1(documento: Any, texto: str, numerador: _NumeradorSecoes) -> None:
@@ -471,7 +490,9 @@ def _adicionar_linha_markdown(
 ) -> None:
     texto = linha.strip()
     if not texto:
-        documento.add_paragraph()
+        # Linha em branco não vira parágrafo vazio: o respiro entre blocos vem
+        # do space_before/after dos estilos, como nos exemplos — parágrafos
+        # vazios deixavam o documento espaçado demais.
         return
     if texto.startswith("# "):
         _adicionar_h1(documento, texto[2:].strip(), numerador)
@@ -568,7 +589,7 @@ def _adicionar_tabela_markdown(documento: Any, linhas: list[str]) -> None:
                 _texto_celula(cells[idx], valor)
                 if numero % 2 == 0:
                     _sombrear_celula(cells[idx], _FILL_ZEBRA)
-    documento.add_paragraph()
+    _espacador(documento)
 
 
 def _titulo_markdown(linha: str) -> str:
@@ -608,7 +629,7 @@ def _adicionar_tabela_timeline(documento: Any, linhas: list[tuple[str, str]]) ->
         _sombrear_celula(cells[0], _FILL_CHAVE)
         _texto_celula(cells[1], _texto_sem_marcacao_inline(descricao))
         _larguras_duas_colunas(tabela, 2.8)
-    documento.add_paragraph()
+    _espacador(documento)
 
 
 def _texto_sem_marcacao_inline(texto: str) -> str:
