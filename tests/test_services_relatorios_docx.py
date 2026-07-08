@@ -265,6 +265,84 @@ def test_linhas_em_branco_nao_viram_paragrafos_vazios(tmp_path: Path):
         assert "<w:sz w:val=\"8\"/>" in p._p.xml
 
 
+_PNG_1PX = (
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+    "AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+
+
+def test_marcacao_inline_completa_vira_formatacao(tmp_path: Path):
+    caminho = tmp_path / "inline.docx"
+
+    renderizar_docx(
+        caminho,
+        titulo="Relatorio exemplo",
+        data_relatorio="2026-07-07",
+        propriedades={"Data": "2026-07-07"},
+        markdown=(
+            "Texto com *italico*, ~~tachado~~, **negrito** e "
+            "[um link](https://exemplo.com/pagina).\n\n"
+            "| Coluna **A** | B |\n| --- | --- |\n| valor `x` | [l](https://e.com) |"
+        ),
+    )
+
+    doc = Document(caminho)
+    texto = "\n".join(p.text for p in doc.paragraphs)
+    assert "*" not in texto and "~~" not in texto
+    corpo = next(p for p in doc.paragraphs if "Texto com" in p.text)
+    assert any(r.italic for r in corpo.runs)
+    assert any(r.font.strike for r in corpo.runs)
+    assert any(r.bold for r in corpo.runs)
+    assert "hyperlink" in corpo._p.xml and "um link" in corpo.text
+    # Células: cabeçalho sem asteriscos, corpo com inline interpretado.
+    tabela = doc.tables[1]
+    assert tabela.rows[0].cells[0].text == "Coluna A"
+    assert "hyperlink" in tabela.rows[1].cells[1]._tc.xml
+
+
+def test_divisor_imagem_e_numeracao_reiniciada(tmp_path: Path):
+    caminho = tmp_path / "blocos.docx"
+
+    renderizar_docx(
+        caminho,
+        titulo="Relatorio exemplo",
+        data_relatorio="2026-07-07",
+        propriedades={"Data": "2026-07-07"},
+        markdown=(
+            "1. primeiro\n\n1. segundo\n\nQuebra de lista.\n\n1. recomeca\n\n"
+            f"---\n\n![legenda]({_PNG_1PX})"
+        ),
+    )
+
+    doc = Document(caminho)
+    texto = "\n".join(p.text for p in doc.paragraphs)
+    # Numeração literal: segunda lista reinicia do 1.
+    assert "1. primeiro" in texto and "2. segundo" in texto and "1. recomeca" in texto
+    # Divisor vira borda horizontal, não texto literal.
+    assert "---" not in texto
+    assert any("pBdr" in p._p.xml for p in doc.paragraphs)
+    # Imagem incorporada de verdade, com legenda.
+    assert len(doc.inline_shapes) == 1
+    assert "legenda" in texto
+
+
+def test_imagem_com_url_invalida_vira_referencia_textual(tmp_path: Path):
+    caminho = tmp_path / "imagem-quebrada.docx"
+
+    renderizar_docx(
+        caminho,
+        titulo="Relatorio exemplo",
+        data_relatorio="2026-07-07",
+        propriedades={"Data": "2026-07-07"},
+        markdown="![print da tela](https://url-invalida.invalido/x.png)",
+    )
+
+    doc = Document(caminho)
+    assert len(doc.inline_shapes) == 0
+    texto = "\n".join(p.text for p in doc.paragraphs)
+    assert "print da tela" in texto
+
+
 def test_periodo_invertido_falha(tmp_path: Path):
     cliente = FakeClient()
 

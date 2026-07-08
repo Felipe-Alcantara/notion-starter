@@ -15,17 +15,20 @@ ajuste manual no Word depois de exportar.
 from __future__ import annotations
 
 import re
+import urllib.request
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 try:  # pragma: no cover - coberto indiretamente nos ambientes com dependencia.
     from docx import Document
     from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.opc.constants import RELATIONSHIP_TYPE
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
-    from docx.shared import Cm, Inches, Pt, RGBColor
+    from docx.shared import Cm, Emu, Inches, Pt, RGBColor
 except ImportError as exc:  # pragma: no cover
     raise RuntimeError(
         "A exportacao DOCX exige a dependencia 'python-docx'. "
@@ -344,6 +347,16 @@ def _texto_celula(
         run.font.color.rgb = cor
 
 
+def _celula_inline(celula: Any, texto: str) -> None:
+    """Preenche a célula interpretando a marcação inline (negrito, links…)."""
+
+    p = celula.paragraphs[0]
+    p.clear()
+    p.paragraph_format.space_before = Pt(2)
+    p.paragraph_format.space_after = Pt(2)
+    _adicionar_inline(p, texto)
+
+
 def _adicionar_capa(
     documento: Any,
     titulo: str,
@@ -453,9 +466,14 @@ def _adicionar_markdown(
     em_codigo = False
     codigo: list[str] = []
     titulo_atual = ""
+    # Numeração das listas ordenadas é literal (o Notion emite "1." para todos
+    # os itens e a numeração automática do Word não reinicia entre listas).
+    # Qualquer linha que não seja item numerado nem linha em branco reinicia.
+    estado = {"numerada": 0}
     while i < len(linhas):
         linha = linhas[i]
         if linha.startswith("```"):
+            estado["numerada"] = 0
             if em_codigo:
                 _adicionar_codigo(documento, "\n".join(codigo))
                 codigo = []
@@ -469,14 +487,16 @@ def _adicionar_markdown(
             i += 1
             continue
         if _linha_tabela(linha):
+            estado["numerada"] = 0
             bloco, i = _coletar_tabela(linhas, i)
             _adicionar_tabela_markdown(documento, bloco)
             continue
         if _linha_timeline(linha) and "linha do tempo" in titulo_atual.lower():
+            estado["numerada"] = 0
             bloco, i = _coletar_timeline(linhas, i)
             _adicionar_tabela_timeline(documento, bloco)
             continue
-        _adicionar_linha_markdown(documento, linha, numerador)
+        _adicionar_linha_markdown(documento, linha, numerador, estado)
         titulo = _titulo_markdown(linha)
         if titulo:
             titulo_atual = titulo
@@ -486,14 +506,21 @@ def _adicionar_markdown(
 
 
 def _adicionar_linha_markdown(
-    documento: Any, linha: str, numerador: _NumeradorSecoes
+    documento: Any,
+    linha: str,
+    numerador: _NumeradorSecoes,
+    estado: dict[str, int],
 ) -> None:
     texto = linha.strip()
     if not texto:
         # Linha em branco não vira parágrafo vazio: o respiro entre blocos vem
         # do space_before/after dos estilos, como nos exemplos — parágrafos
-        # vazios deixavam o documento espaçado demais.
+        # vazios deixavam o documento espaçado demais. Também não reinicia a
+        # numeração, porque os blocos chegam separados por linha em branco.
         return
+    numerada = re.match(r"^\d+\.\s+", texto)
+    if not numerada:
+        estado["numerada"] = 0
     if texto.startswith("# "):
         _adicionar_h1(documento, texto[2:].strip(), numerador)
         return
@@ -502,6 +529,13 @@ def _adicionar_linha_markdown(
         return
     if texto.startswith("### "):
         documento.add_heading(texto[4:].strip(), level=3)
+        return
+    if _PADRAO_DIVISOR.match(texto):
+        _adicionar_divisor(documento)
+        return
+    imagem = _PADRAO_IMAGEM.match(texto)
+    if imagem:
+        _adicionar_imagem(documento, imagem.group(1), imagem.group(2))
         return
     if texto.startswith("- [ ] ") or texto.startswith("- [x] "):
         marcador = "[x]" if texto.startswith("- [x] ") else "[ ]"
@@ -512,35 +546,137 @@ def _adicionar_linha_markdown(
         p = documento.add_paragraph(style="List Bullet")
         _adicionar_inline(p, texto[2:])
         return
-    if re.match(r"^\d+\.\s+", texto):
-        p = documento.add_paragraph(style="List Number")
-        _adicionar_inline(p, re.sub(r"^\d+\.\s+", "", texto))
+    if numerada:
+        estado["numerada"] += 1
+        p = documento.add_paragraph()
+        p.paragraph_format.left_indent = Cm(0.75)
+        p.paragraph_format.space_before = Pt(2)
+        p.paragraph_format.space_after = Pt(2)
+        p.add_run(f"{estado['numerada']}. ").bold = True
+        _adicionar_inline(p, texto[numerada.end() :])
         return
     if texto.startswith("> "):
         p = documento.add_paragraph()
         p.paragraph_format.left_indent = Inches(0.25)
-        p.add_run(texto[2:]).italic = True
+        _adicionar_inline(p, texto[2:])
+        for run in p.runs:
+            run.italic = True
         return
     p = documento.add_paragraph()
     _adicionar_inline(p, texto)
 
 
+# Ordem importa: ``**`` antes de ``*`` (senão negrito casa como itálico) e o
+# link por último entre os pares. Cobre o que ``_item_para_markdown`` do
+# ``content.py`` emite: negrito, itálico, tachado, código e ``[texto](url)``.
+_PADRAO_INLINE = re.compile(
+    r"(\*\*[^*]+\*\*|\*[^*]+\*|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)\s]+\))"
+)
+_PADRAO_LINK = re.compile(r"^\[([^\]]+)\]\(([^)\s]+)\)$")
+
+
+def _adicionar_hyperlink(paragrafo: Any, texto: str, url: str) -> None:
+    try:
+        r_id = paragrafo.part.relate_to(
+            url, RELATIONSHIP_TYPE.HYPERLINK, is_external=True
+        )
+    except ValueError:
+        # URL que o pacote OPC rejeita: mantém o texto sem link, sem quebrar.
+        paragrafo.add_run(texto)
+        return
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), r_id)
+    run = OxmlElement("w:r")
+    rpr = OxmlElement("w:rPr")
+    cor = OxmlElement("w:color")
+    cor.set(qn("w:val"), "2E75B6")
+    rpr.append(cor)
+    sublinhado = OxmlElement("w:u")
+    sublinhado.set(qn("w:val"), "single")
+    rpr.append(sublinhado)
+    run.append(rpr)
+    t = OxmlElement("w:t")
+    t.set(qn("xml:space"), "preserve")
+    t.text = texto
+    run.append(t)
+    hyperlink.append(run)
+    paragrafo._p.append(hyperlink)
+
+
 def _adicionar_inline(paragrafo: Any, texto: str) -> None:
-    padrao = re.compile(r"(\*\*[^*]+\*\*|`[^`]+`)")
     pos = 0
-    for match in padrao.finditer(texto):
+    for match in _PADRAO_INLINE.finditer(texto):
         if match.start() > pos:
             paragrafo.add_run(texto[pos : match.start()])
         token = match.group(0)
-        run = paragrafo.add_run(token[2:-2] if token.startswith("**") else token[1:-1])
+        pos = match.end()
+        link = _PADRAO_LINK.match(token)
+        if link:
+            _adicionar_hyperlink(
+                paragrafo, _texto_sem_marcacao_inline(link.group(1)), link.group(2)
+            )
+            continue
         if token.startswith("**"):
-            run.bold = True
+            paragrafo.add_run(token[2:-2]).bold = True
+        elif token.startswith("~~"):
+            paragrafo.add_run(token[2:-2]).font.strike = True
+        elif token.startswith("*"):
+            paragrafo.add_run(token[1:-1]).italic = True
         else:
+            run = paragrafo.add_run(token[1:-1])
             run.font.name = "Consolas"
             run.font.size = Pt(9.5)
-        pos = match.end()
     if pos < len(texto):
         paragrafo.add_run(texto[pos:])
+
+
+_PADRAO_IMAGEM = re.compile(r"^!\[([^\]]*)\]\(([^)\s]+)\)$")
+_PADRAO_DIVISOR = re.compile(r"^(-{3,}|\*{3,}|_{3,})$")
+
+
+def _adicionar_divisor(documento: Any) -> None:
+    """Linha horizontal fina, o equivalente visual do ``---`` (divider)."""
+
+    p = documento.add_paragraph()
+    p.paragraph_format.space_before = Pt(6)
+    p.paragraph_format.space_after = Pt(6)
+    pbdr = OxmlElement("w:pBdr")
+    borda = OxmlElement("w:bottom")
+    borda.set(qn("w:val"), "single")
+    borda.set(qn("w:sz"), "6")
+    borda.set(qn("w:color"), "BFBFBF")
+    pbdr.append(borda)
+    p._p.get_or_add_pPr().append(pbdr)
+
+
+def _adicionar_imagem(documento: Any, alt: str, url: str) -> None:
+    """Incorpora a imagem no documento, centralizada e limitada à página.
+
+    Se o download falhar (URL do Notion expirada, sem rede), a referência é
+    registrada como texto em vez de o bloco sumir do relatório.
+    """
+
+    try:
+        with urllib.request.urlopen(url, timeout=20) as resposta:
+            dados = resposta.read()
+        imagem = documento.add_picture(BytesIO(dados))
+        maximo = Cm(_LARGURA_UTIL_CM)
+        if imagem.width > maximo:
+            imagem.height = Emu(int(imagem.height * (maximo / imagem.width)))
+            imagem.width = maximo
+        documento.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+        if alt:
+            legenda = documento.add_paragraph()
+            legenda.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = legenda.add_run(alt)
+            run.italic = True
+            run.font.size = Pt(9)
+            run.font.color.rgb = _COR_DATA
+    except Exception:
+        p = documento.add_paragraph()
+        run = p.add_run(f"[imagem{': ' + alt if alt else ''}] {url}")
+        run.italic = True
+        run.font.color.rgb = _COR_DATA
 
 
 def _adicionar_codigo(documento: Any, texto: str) -> None:
@@ -583,10 +719,15 @@ def _adicionar_tabela_markdown(documento: Any, linhas: list[str]) -> None:
         for idx, valor in enumerate(linha[: len(cells)]):
             if numero == 0:
                 # Cabecalho como nos exemplos: fundo marinho e texto branco.
-                _texto_celula(cells[idx], valor, bold=True, cor=RGBColor(0xFF, 0xFF, 0xFF))
+                _texto_celula(
+                    cells[idx],
+                    _texto_sem_marcacao_inline(valor),
+                    bold=True,
+                    cor=RGBColor(0xFF, 0xFF, 0xFF),
+                )
                 _sombrear_celula(cells[idx], _FILL_CABECALHO)
             else:
-                _texto_celula(cells[idx], valor)
+                _celula_inline(cells[idx], valor)
                 if numero % 2 == 0:
                     _sombrear_celula(cells[idx], _FILL_ZEBRA)
     _espacador(documento)
@@ -633,7 +774,10 @@ def _adicionar_tabela_timeline(documento: Any, linhas: list[tuple[str, str]]) ->
 
 
 def _texto_sem_marcacao_inline(texto: str) -> str:
+    texto = re.sub(r"!?\[([^\]]+)\]\([^)\s]+\)", r"\1", texto)
     texto = re.sub(r"\*\*([^*]+)\*\*", r"\1", texto)
+    texto = re.sub(r"~~([^~]+)~~", r"\1", texto)
+    texto = re.sub(r"\*([^*]+)\*", r"\1", texto)
     texto = re.sub(r"`([^`]+)`", r"\1", texto)
     return texto
 
