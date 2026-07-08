@@ -43,7 +43,7 @@ PROPRIEDADES_DESTAQUE_PADRAO = (
 SECOES_DESTAQUE = (
     ("Resumo do Dia", ("Resumo",)),
     ("Bloqueios", ("Bloqueios",)),
-    ("Proximos passos", ("Proximos passos", "Próximos passos")),
+    ("Próximos passos", ("Proximos passos", "Próximos passos")),
 )
 
 
@@ -165,7 +165,9 @@ def renderizar_docx(
     documento = Document()
     _configurar_documento(documento)
     _adicionar_capa(documento, titulo, data_relatorio, propriedades)
-    _adicionar_tabela_metadados(documento, propriedades, propriedades_destaque)
+    _adicionar_tabela_metadados(
+        documento, propriedades, propriedades_destaque, titulo=titulo
+    )
     _adicionar_secoes_destaque(documento, propriedades)
     _adicionar_markdown(documento, markdown)
 
@@ -202,8 +204,8 @@ def _adicionar_capa(
     status = _primeiro_valor(propriedades, ("Status",))
     linhas = [
         _valor_para_texto(projeto).upper() if projeto else "VITIS SOULS",
-        "Relatorio de Sessao",
-        f"{_data_extenso(data_relatorio)} - {dia}",
+        "Relatório de Sessão",
+        f"{_data_extenso(data_relatorio)}  —  {dia}",
     ]
     if titulo:
         linhas.append(titulo)
@@ -226,12 +228,18 @@ def _adicionar_tabela_metadados(
     documento: Any,
     propriedades: dict[str, Any],
     propriedades_destaque: tuple[str, ...],
+    *,
+    titulo: str = "",
 ) -> None:
-    ocultas = {"Resumo", "Bloqueios", "Proximos passos"}
+    # Fora da tabela: propriedades que já viram seção de destaque (nas duas
+    # grafias) e o título, que já aparece na capa — os exemplos não os repetem.
+    ocultas = {"Resumo", "Bloqueios", "Proximos passos", "Próximos passos"}
     ordenadas = [
         (nome, valor)
         for nome, valor in _ordenar_propriedades(propriedades, propriedades_destaque)
-        if nome not in ocultas and _valor_para_texto(valor)
+        if nome not in ocultas
+        and _valor_para_texto(valor)
+        and _valor_para_texto(valor) != titulo
     ]
     if not ordenadas:
         return
@@ -500,11 +508,11 @@ def _nome_seguro(valor: str) -> str:
 def _dia_semana(data_iso: str) -> str:
     nomes = (
         "segunda-feira",
-        "terca-feira",
+        "terça-feira",
         "quarta-feira",
         "quinta-feira",
         "sexta-feira",
-        "sabado",
+        "sábado",
         "domingo",
     )
     return nomes[datetime.fromisoformat(data_iso[:10]).weekday()]
@@ -514,7 +522,7 @@ def _data_extenso(data_iso: str) -> str:
     meses = (
         "janeiro",
         "fevereiro",
-        "marco",
+        "março",
         "abril",
         "maio",
         "junho",

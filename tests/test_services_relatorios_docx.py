@@ -124,6 +124,49 @@ def test_renderizador_converte_markdown_basico_para_docx(tmp_path: Path):
     assert "Heading 1" in estilos
 
 
+def test_capa_usa_acentos_e_travessao_como_nos_exemplos(tmp_path: Path):
+    caminho = tmp_path / "capa.docx"
+
+    renderizar_docx(
+        caminho,
+        titulo="Relatorio exemplo",
+        data_relatorio="2026-07-07",
+        propriedades={"Data": "2026-07-07"},
+        markdown="# Corpo",
+    )
+
+    texto = _texto_docx(caminho)
+    assert "Relatório de Sessão" in texto
+    assert "07 de julho de 2026  —  terça-feira" in texto
+    assert "Relatorio de Sessao" not in texto
+
+
+def test_metadados_nao_repetem_titulo_nem_secoes_de_destaque(tmp_path: Path):
+    caminho = tmp_path / "metadados.docx"
+
+    renderizar_docx(
+        caminho,
+        titulo="Relatorio exemplo",
+        data_relatorio="2026-07-07",
+        propriedades={
+            "Data": "2026-07-07",
+            "Relatório": "Relatorio exemplo",
+            "Próximos passos": "Rotacionar o token",
+            "Resumo": "Resumo executivo",
+        },
+        markdown="# Corpo",
+    )
+
+    doc = Document(caminho)
+    celulas_chave = [row.cells[0].text for table in doc.tables for row in table.rows]
+    assert "Próximos passos" not in celulas_chave
+    assert "Relatório" not in celulas_chave
+    texto = _texto_docx(caminho)
+    # As propriedades ocultadas da tabela continuam no documento como seções.
+    assert "Rotacionar o token" in texto
+    assert "Resumo executivo" in texto
+
+
 def test_periodo_invertido_falha(tmp_path: Path):
     cliente = FakeClient()
 
