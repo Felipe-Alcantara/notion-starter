@@ -119,6 +119,25 @@ def date(
     return {"date": payload}
 
 
+def arquivo_enviado(upload_id: str, nome: str) -> NotionPropertyValue:
+    """Monta um valor de propriedade ``files`` a partir de um upload direto.
+
+    Recebe o ``file_upload`` id devolvido por
+    :meth:`notion_starter.NotionClient.enviar_arquivo` e o embrulha no formato
+    que a API espera para anexar o arquivo à propriedade de uma linha.
+
+    Args:
+        upload_id: ``id`` do ``file_upload`` já enviado.
+        nome: Nome exibido do arquivo.
+    """
+
+    return {
+        "files": [
+            {"type": "file_upload", "file_upload": {"id": upload_id}, "name": nome[:100]}
+        ]
+    }
+
+
 def relation(ids: list[str]) -> NotionPropertyValue:
     """Monta um valor de propriedade ``relation`` (lista de IDs de páginas)."""
 
