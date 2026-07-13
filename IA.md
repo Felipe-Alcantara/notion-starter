@@ -72,6 +72,14 @@ pelo `notion-tasks-cli` e pelo `notion-workspace-app`.
   dezenas de uploads quebravam no primeiro 429 do `/send`. Validação:
   `ruff check .` limpo e 193 testes verdes (3 novos: limite, retry em 429 e
   retry em falha de rede).
+- [2026-07-13] ✅ Fechadas as melhorias propostas no relatório de 10/07 (5.2):
+  `criar_database` estendido (is_inline, icone, descricao, prefixo_id/unique_id),
+  `valores_br` (números e datas BR), `FontePlanilha` (.xlsx via extra
+  `planilha`, .csv via stdlib) com `ItemColetado.propriedades` tipadas,
+  `services/importacao` (import em lote retomável por estado local),
+  `properties.schema_propriedade` e `services/anexos.anexar_arquivo` (upload +
+  propriedade files preservando anexos). Validação: 230 testes verdes, ruff
+  limpo, CI verde.
 
 ---
 
