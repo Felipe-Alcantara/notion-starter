@@ -81,25 +81,50 @@ def ler_pagina_ou_database(
     tenta ler o corpo; se vier vazio mas houver linhas, sinaliza que é um
     database e já as devolve.
 
+    **Propriedades vêm antes do corpo**: uma página do Notion é uma coisa só —
+    as propriedades (colunas, quando ela é linha de um database) MAIS o corpo
+    (blocos). Há páginas com mais informação nas propriedades do que no corpo,
+    então a leitura completa devolve as duas partes, com ``propriedades``
+    primeiro no resultado.
+
     Args:
         page_id: ID da página ou database.
         cliente: Cliente Notion opcional (injeção para testes/uso alternativo).
 
     Returns:
-        ``{"tipo": "pagina", "markdown": ...}`` para páginas; ``{"tipo":
-        "database", "markdown": "", "linhas": [...]}`` quando o ID é um database
-        com linhas. Páginas sem corpo voltam como ``"pagina"`` com markdown vazio.
+        ``{"tipo": "pagina", "propriedades": {...}, "markdown": ...}`` para
+        páginas — ``propriedades`` é o mapa coluna → valor simples (vazio para
+        páginas soltas, fora de database); ``{"tipo": "database", "markdown":
+        "", "linhas": [...]}`` quando o ID é um database com linhas. Páginas
+        sem corpo voltam como ``"pagina"`` com markdown vazio.
     """
 
+    from notion_starter.readers import extrair_valores
+
     cli = cliente or _cliente_padrao()
+    propriedades: dict[str, Any] = {}
+    try:
+        valores = extrair_valores(cli.obter_pagina(page_id))
+        # Só valores preenchidos: coluna vazia não é informação na leitura.
+        propriedades = {k: v for k, v in valores.items() if v not in (None, "", [])}
+    except Exception:
+        # O ID pode ser um database (o endpoint de página responde 404) — o
+        # fallback abaixo resolve; propriedades ficam vazias.
+        propriedades = {}
+
     markdown = ler_conteudo(page_id, cliente=cli)
-    if markdown:
-        return {"id": page_id, "tipo": "pagina", "markdown": markdown}
+    if markdown or propriedades:
+        return {
+            "id": page_id,
+            "tipo": "pagina",
+            "propriedades": propriedades,
+            "markdown": markdown,
+        }
 
     linhas = listar_linhas(page_id, cliente=cli)
     if linhas:
         return {"id": page_id, "tipo": "database", "markdown": "", "linhas": linhas}
-    return {"id": page_id, "tipo": "pagina", "markdown": ""}
+    return {"id": page_id, "tipo": "pagina", "propriedades": {}, "markdown": ""}
 
 
 def _preview_bloco(bloco: dict[str, Any]) -> str:
