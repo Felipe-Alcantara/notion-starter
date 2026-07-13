@@ -73,3 +73,29 @@ def test_arquivo_enviado_monta_files_com_upload():
     assert valor["files"][0]["type"] == "file_upload"
     assert valor["files"][0]["file_upload"]["id"] == "upload42"
     assert valor["files"][0]["name"] == "relatorio.docx"
+
+
+def test_schema_propriedade_monta_fragmentos():
+    from notion_starter import properties as p
+
+    assert p.schema_propriedade("titulo") == {"title": {}}
+    assert p.schema_propriedade("numero") == {"number": {}}
+    assert p.schema_propriedade("Texto") == {"rich_text": {}}
+    assert p.schema_propriedade("telefone") == {"phone_number": {}}
+
+
+def test_schema_propriedade_tipo_invalido_levanta():
+    import pytest
+
+    from notion_starter import properties as p
+
+    with pytest.raises(ValueError, match="Tipos aceitos"):
+        p.schema_propriedade("moeda")
+
+
+def test_schema_propriedade_devolve_copia_independente():
+    from notion_starter import properties as p
+
+    a = p.schema_propriedade("select")
+    a["select"]["options"] = [1]
+    assert p.schema_propriedade("select") == {"select": {}}

@@ -144,6 +144,47 @@ def relation(ids: list[str]) -> NotionPropertyValue:
     return {"relation": [{"id": id_} for id_ in ids]}
 
 
+#: Tipos aceitos por :func:`schema_propriedade` e o fragmento de schema de cada um.
+TIPOS_SCHEMA: dict[str, dict[str, Any]] = {
+    "titulo": {"title": {}},
+    "texto": {"rich_text": {}},
+    "numero": {"number": {}},
+    "data": {"date": {}},
+    "select": {"select": {}},
+    "multi_select": {"multi_select": {}},
+    "checkbox": {"checkbox": {}},
+    "email": {"email": {}},
+    "url": {"url": {}},
+    "telefone": {"phone_number": {}},
+    "pessoas": {"people": {}},
+    "arquivos": {"files": {}},
+}
+
+
+def schema_propriedade(tipo: str) -> dict[str, Any]:
+    """Monta o fragmento de **schema** de uma propriedade a partir de um tipo.
+
+    Diferente das demais funções deste módulo (que montam *valores* de
+    propriedade para uma linha), esta monta a *definição* da coluna usada em
+    :meth:`notion_starter.NotionClient.criar_database` — a partir de nomes de
+    tipo em português (``titulo``, ``texto``, ``numero``, ``data``…).
+
+    Args:
+        tipo: Um dos tipos em :data:`TIPOS_SCHEMA`.
+
+    Raises:
+        ValueError: Se o tipo não for reconhecido.
+    """
+
+    fragmento = TIPOS_SCHEMA.get(tipo.strip().lower())
+    if fragmento is None:
+        raise ValueError(
+            f"Tipo de propriedade '{tipo}' inválido. "
+            f"Tipos aceitos: {', '.join(sorted(TIPOS_SCHEMA))}."
+        )
+    return {chave: dict(valor) for chave, valor in fragmento.items()}
+
+
 def _para_iso(valor: str | _dt.date | _dt.datetime) -> str:
     """Serializa um valor de data em uma string ISO 8601."""
 
