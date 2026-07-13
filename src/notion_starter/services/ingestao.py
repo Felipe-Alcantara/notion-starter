@@ -45,13 +45,20 @@ class Fonte(Protocol):
 
 @dataclass
 class ItemColetado:
-    """Item normalizado produzido por uma fonte."""
+    """Item normalizado produzido por uma fonte.
+
+    ``propriedades`` carrega valores de propriedade **já no formato do Notion**
+    (montados com :mod:`notion_starter.properties`); fontes tabulares como a
+    :class:`FontePlanilha` usam este campo para que cada coluna vire uma
+    propriedade tipada da linha, e não só texto.
+    """
 
     nome: str
     tipo_fonte: str
     conteudo: str = ""
     metadados: dict[str, Any] = field(default_factory=dict)
     origem: str = ""
+    propriedades: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -164,6 +171,183 @@ class FonteGitHub:
             )
 
 
+#: Tipos de coluna aceitos pela :class:`FontePlanilha` e seus builders.
+TIPOS_COLUNA = ("texto", "numero", "data", "select", "email", "url", "checkbox", "telefone")
+
+#: Valores textuais tratados como "verdadeiro" numa coluna ``checkbox``.
+_VALORES_VERDADEIROS = {"sim", "true", "verdadeiro", "x", "1", "yes", "feito", "ok"}
+
+
+class FontePlanilha:
+    """Converte uma planilha (``.xlsx``/``.csv``) em :class:`ItemColetado`.
+
+    A primeira linha é o cabeçalho. Cada linha vira um item cujo nome sai da
+    coluna-título (por padrão, a primeira) e cujas demais colunas viram
+    propriedades tipadas via ``tipos`` (``coluna -> tipo``). Valores que não
+    convertem para o tipo pedido (número/data inválidos) **não são
+    descartados**: vão para a propriedade "Observações" da linha.
+
+    Números e datas aceitam o formato brasileiro (``1.614``, ``2,7 mil``,
+    ``dd/mm/aaaa``, serial do Excel) via :mod:`notion_starter.valores_br`.
+
+    Args:
+        caminho: Arquivo ``.xlsx`` (requer ``openpyxl``, extra ``planilha``)
+            ou ``.csv`` (stdlib).
+        aba: Nome da aba do ``.xlsx``; por padrão, a aba ativa.
+        coluna_titulo: Coluna usada como título da linha; por padrão, a
+            primeira do cabeçalho.
+        tipos: Mapeamento ``coluna -> tipo`` (ver :data:`TIPOS_COLUNA`).
+            Colunas fora do mapeamento viram ``rich_text``.
+        renomear: Mapeamento opcional ``coluna -> nome da propriedade`` no
+            Notion (por padrão, o próprio cabeçalho).
+    """
+
+    def __init__(
+        self,
+        caminho: str | Path,
+        *,
+        aba: str | None = None,
+        coluna_titulo: str | None = None,
+        tipos: dict[str, str] | None = None,
+        renomear: dict[str, str] | None = None,
+    ) -> None:
+        self._caminho = Path(caminho)
+        self._aba = aba
+        self._coluna_titulo = coluna_titulo
+        self._tipos = dict(tipos or {})
+        self._renomear = dict(renomear or {})
+        for coluna, tipo in self._tipos.items():
+            if tipo not in TIPOS_COLUNA:
+                raise ValueError(
+                    f"Tipo '{tipo}' inválido para a coluna '{coluna}'. "
+                    f"Tipos aceitos: {', '.join(TIPOS_COLUNA)}."
+                )
+
+    def coletar(self) -> Iterable[ItemColetado]:
+        cabecalho, linhas = self._ler()
+        if not cabecalho:
+            return
+        coluna_titulo = self._coluna_titulo or cabecalho[0]
+        if coluna_titulo not in cabecalho:
+            raise ValueError(f"Coluna-título '{coluna_titulo}' não existe no cabeçalho.")
+
+        for numero, linha in enumerate(linhas, start=2):
+            valores = dict(zip(cabecalho, linha, strict=False))
+            titulo = str(valores.get(coluna_titulo) or "").strip()
+            if not titulo:
+                continue
+            props, observacoes = self._propriedades_da_linha(valores, coluna_titulo)
+            if observacoes:
+                props["Observações"] = properties.rich_text(
+                    _limitar_texto("; ".join(observacoes))
+                )
+            yield ItemColetado(
+                nome=titulo,
+                tipo_fonte="planilha",
+                metadados={"linha": numero, "arquivo": self._caminho.name},
+                origem=f"{self._caminho.name}:{numero}",
+                propriedades=props,
+            )
+
+    # -- Leitura -------------------------------------------------------------
+
+    def _ler(self) -> tuple[list[str], list[list[Any]]]:
+        if not self._caminho.is_file():
+            raise ValueError(f"Planilha não encontrada: {self._caminho}")
+        sufixo = self._caminho.suffix.lower()
+        if sufixo == ".csv":
+            return self._ler_csv()
+        if sufixo == ".xlsx":
+            return self._ler_xlsx()
+        raise ValueError(f"Formato não suportado: '{sufixo}'. Use .xlsx ou .csv.")
+
+    def _ler_csv(self) -> tuple[list[str], list[list[Any]]]:
+        import csv
+
+        with self._caminho.open(encoding="utf-8-sig", newline="") as arquivo:
+            leitor = csv.reader(arquivo)
+            linhas = [linha for linha in leitor if any(str(c).strip() for c in linha)]
+        if not linhas:
+            return [], []
+        cabecalho = [str(c).strip() for c in linhas[0]]
+        return cabecalho, [list(linha) for linha in linhas[1:]]
+
+    def _ler_xlsx(self) -> tuple[list[str], list[list[Any]]]:
+        try:
+            import openpyxl
+        except ImportError as exc:  # pragma: no cover - depende do ambiente
+            raise ValueError(
+                "Ler .xlsx requer o pacote openpyxl. Instale com: "
+                "pip install 'notion-starter[planilha]'"
+            ) from exc
+
+        pasta = openpyxl.load_workbook(self._caminho, data_only=True, read_only=True)
+        try:
+            if self._aba is not None:
+                if self._aba not in pasta.sheetnames:
+                    raise ValueError(
+                        f"Aba '{self._aba}' não existe. Abas: {', '.join(pasta.sheetnames)}."
+                    )
+                planilha = pasta[self._aba]
+            else:
+                planilha = pasta.active
+            linhas = [
+                list(linha)
+                for linha in planilha.iter_rows(values_only=True)
+                if any(c is not None and str(c).strip() for c in linha)
+            ]
+        finally:
+            pasta.close()
+        if not linhas:
+            return [], []
+        cabecalho = [str(c or "").strip() for c in linhas[0]]
+        return cabecalho, linhas[1:]
+
+    # -- Conversão -----------------------------------------------------------
+
+    def _propriedades_da_linha(
+        self, valores: dict[str, Any], coluna_titulo: str
+    ) -> tuple[dict[str, Any], list[str]]:
+        from notion_starter.valores_br import data_br, numero_br
+
+        props: dict[str, Any] = {}
+        observacoes: list[str] = []
+        for coluna, bruto in valores.items():
+            if coluna == coluna_titulo or not coluna:
+                continue
+            if bruto is None or not str(bruto).strip():
+                continue
+            texto = str(bruto).strip()
+            nome_prop = self._renomear.get(coluna, coluna)
+            tipo = self._tipos.get(coluna, "texto")
+
+            if tipo == "numero":
+                numero = numero_br(bruto)
+                if numero is None:
+                    observacoes.append(f"{coluna}: {texto}")
+                else:
+                    props[nome_prop] = properties.number(numero)
+            elif tipo == "data":
+                data = data_br(bruto)
+                if data is None:
+                    observacoes.append(f"{coluna}: {texto}")
+                else:
+                    props[nome_prop] = properties.date(data)
+            elif tipo == "select":
+                props[nome_prop] = properties.select(_limitar_texto(texto))
+            elif tipo == "email":
+                props[nome_prop] = properties.email(texto)
+            elif tipo == "url":
+                props[nome_prop] = properties.url(texto)
+            elif tipo == "telefone":
+                props[nome_prop] = properties.phone_number(texto)
+            elif tipo == "checkbox":
+                props[nome_prop] = properties.checkbox(texto.lower() in _VALORES_VERDADEIROS)
+            else:
+                props[nome_prop] = properties.rich_text(_limitar_texto(texto))
+        return props, observacoes
+
+
 def _limitar_texto(valor: str) -> str:
     return valor[:LIMITE_TEXTO_NOTION]
 
@@ -184,6 +368,11 @@ def _propriedades_de_item(item: ItemColetado) -> dict[str, Any]:
         props["Descrição"] = properties.rich_text(_limitar_texto(item.conteudo))
     if item.origem:
         props["Origem"] = properties.rich_text(_limitar_texto(item.origem))
+    # Propriedades tipadas da fonte por último: são mais específicas e podem
+    # sobrescrever os campos genéricos (exceto os reservados acima).
+    for nome_prop, valor in item.propriedades.items():
+        if nome_prop not in ("Nome", "Fonte", "Origem"):
+            props[nome_prop] = valor
     return props
 
 

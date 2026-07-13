@@ -431,3 +431,66 @@ def test_enviar_arquivo_falha_de_rede_no_send_retenta(monkeypatch):
     client = NotionClient(token=TOKEN, max_retries=1, backoff_base=0.0)
     uid = client.enviar_arquivo(b"x", "a.bin")
     assert uid == "u3"
+
+
+# -- criar_database estendido ------------------------------------------------
+
+
+@responses.activate
+def test_criar_database_minimo_nao_envia_campos_opcionais():
+    responses.add(
+        responses.POST, f"{NOTION_BASE_URL}/databases", json={"id": "db1"}, status=200
+    )
+    client = criar_client()
+    client.criar_database("page1", "Projetos", {"Nome": {"title": {}}})
+    corpo = responses.calls[0].request.body
+    assert b"is_inline" not in corpo
+    assert b"icon" not in corpo
+    assert b"description" not in corpo
+    assert b"unique_id" not in corpo
+
+
+@responses.activate
+def test_criar_database_com_inline_icone_descricao_e_prefixo():
+    responses.add(
+        responses.POST, f"{NOTION_BASE_URL}/databases", json={"id": "db1"}, status=200
+    )
+    client = criar_client()
+    client.criar_database(
+        "page1",
+        "Cadastro",
+        {"Nome": {"title": {}}},
+        is_inline=True,
+        icone="📇",
+        descricao="Cadastro de contas",
+        prefixo_id="DVIP",
+    )
+    import json as _json
+
+    corpo = _json.loads(responses.calls[0].request.body)
+    assert corpo["is_inline"] is True
+    assert corpo["icon"] == {"type": "emoji", "emoji": "📇"}
+    assert corpo["description"][0]["text"]["content"] == "Cadastro de contas"
+    assert corpo["properties"]["ID"] == {"unique_id": {"prefix": "DVIP"}}
+
+
+def test_criar_database_prefixo_id_conflita_com_propriedade_id():
+    client = criar_client()
+    with pytest.raises(ValueError):
+        client.criar_database(
+            "page1",
+            "Cadastro",
+            {"Nome": {"title": {}}, "ID": {"rich_text": {}}},
+            prefixo_id="DVIP",
+        )
+
+
+def test_criar_database_prefixo_id_nao_muta_propriedades_do_chamador():
+    props = {"Nome": {"title": {}}}
+    client = criar_client()
+    with responses.RequestsMock() as rsps:
+        rsps.add(
+            responses.POST, f"{NOTION_BASE_URL}/databases", json={"id": "db1"}, status=200
+        )
+        client.criar_database("page1", "Cadastro", props, prefixo_id="DVIP")
+    assert "ID" not in props

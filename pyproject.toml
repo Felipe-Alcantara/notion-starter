@@ -26,7 +26,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+planilha = [
+    "openpyxl>=3.1",
+]
 dev = [
+    "openpyxl>=3.1",
     "pytest>=7.0",
     "responses>=0.23",
     "ruff>=0.4",

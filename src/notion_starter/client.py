@@ -69,6 +69,9 @@ class DatabaseCreatePayload(TypedDict):
     parent: DatabaseParentPayload
     title: list[DatabaseTitleItemPayload]
     properties: dict[str, dict[str, object]]
+    is_inline: NotRequired[bool]
+    icon: NotRequired[dict[str, object]]
+    description: NotRequired[list[dict[str, object]]]
 
 
 class DatabaseUpdatePayload(TypedDict):
@@ -485,6 +488,11 @@ class NotionClient:
         pagina_id: str,
         titulo: str,
         propriedades: dict[str, dict[str, object]],
+        *,
+        is_inline: bool = False,
+        icone: str | None = None,
+        descricao: str | None = None,
+        prefixo_id: str | None = None,
     ) -> dict[str, Any]:
         """Cria um novo database como filho de uma página.
 
@@ -492,9 +500,21 @@ class NotionClient:
             pagina_id: ID da página pai.
             titulo: Título do database.
             propriedades: Schema do database no formato da API.
+            is_inline: Quando ``True``, cria o database embutido no corpo da
+                página (inline) em vez de página cheia.
+            icone: Emoji usado como ícone do database, quando informado.
+            descricao: Descrição textual do database, quando informada.
+            prefixo_id: Atalho para numeração automática: adiciona uma
+                propriedade ``ID`` do tipo ``unique_id`` com este prefixo.
+                **Atenção**: o prefixo de ``unique_id`` é único por workspace —
+                use um prefixo distinto por database, ou a API rejeita a criação.
 
         Returns:
             A resposta JSON do database criado.
+
+        Raises:
+            ValueError: Se ``prefixo_id`` for usado e ``propriedades`` já
+                definir uma propriedade ``ID``.
         """
 
         pagina_limpa = _validar_identificador(pagina_id, "pagina_id")
@@ -502,8 +522,24 @@ class NotionClient:
         payload: DatabaseCreatePayload = {
             "parent": {"type": "page_id", "page_id": pagina_limpa},
             "title": [{"type": "text", "text": {"content": titulo_limpo}}],
-            "properties": propriedades,
+            "properties": dict(propriedades),
         }
+        if prefixo_id is not None:
+            prefixo_limpo = _validar_identificador(prefixo_id, "prefixo_id")
+            if "ID" in payload["properties"]:
+                raise ValueError(
+                    "prefixo_id adiciona a propriedade 'ID' automaticamente; "
+                    "remova a propriedade 'ID' de propriedades ou o atalho."
+                )
+            payload["properties"]["ID"] = {"unique_id": {"prefix": prefixo_limpo}}
+        if is_inline:
+            payload["is_inline"] = True
+        if icone is not None:
+            payload["icon"] = {"type": "emoji", "emoji": icone}
+        if descricao is not None:
+            payload["description"] = [
+                {"type": "text", "text": {"content": descricao}}
+            ]
         return self._request_json(
             method="POST",
             path="/databases",
