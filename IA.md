@@ -48,7 +48,7 @@ pelo `notion-tasks-cli` e pelo `notion-workspace-app`.
 
 ## 🧪 TESTES & GATE
 
-- Gate: `ruff check .` + `python -m pytest` (183 testes em 2026-07-08, sem rede).
+- Gate: `ruff check .` + `python -m pytest` (193 testes em 2026-07-13, sem rede).
 - CI: GitHub Actions (`.github/workflows/ci.yml`) com matriz Python 3.10–3.13.
 
 ---
@@ -62,6 +62,16 @@ pelo `notion-tasks-cli` e pelo `notion-workspace-app`.
   `CONTRIBUTING.md`, `IA.md`, `.env.example` e CI GitHub Actions. Decisão registrada:
   sem `start_app.py` por ser biblioteca. Validação: `ruff check .` limpo e 183 testes
   verdes.
+- [2026-07-13] ✅ Merge do PR #1 (contribuição externa): `mover_pagina`,
+  `mover_database` (re-parent, versão 2025-09-03 por chamada) e `enviar_arquivo`
+  (File Upload API) + `properties.arquivo_enviado`. Em seguida, hardening no
+  `main`: o passo multipart do upload passou a usar retry/backoff próprio
+  (`_enviar_multipart`, espelhando a política do `_request_json` — antes era um
+  `requests.post` cru, sem resiliência) e `enviar_arquivo` valida o limite de
+  20 MB (`NOTION_UPLOAD_MAX_BYTES`) antes de tocar a API. Motivo: migrações com
+  dezenas de uploads quebravam no primeiro 429 do `/send`. Validação:
+  `ruff check .` limpo e 193 testes verdes (3 novos: limite, retry em 429 e
+  retry em falha de rede).
 
 ---
 

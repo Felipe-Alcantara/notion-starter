@@ -33,6 +33,10 @@ NOTION_RETRYABLE_STATUS_CODES = frozenset({409, 429, 500, 502, 503, 504, 529})
 #: TTL padrão do cache de schema (get_database), em segundos.
 NOTION_SCHEMA_CACHE_TTL = 300
 
+#: Tamanho máximo (em bytes) aceito pela File Upload API em parte única (20 MB).
+#: Arquivos maiores exigem o modo multi-parte, não coberto por ``enviar_arquivo``.
+NOTION_UPLOAD_MAX_BYTES = 20 * 1024 * 1024
+
 #: Limite do Notion para o conteúdo de cada item de rich_text (título ou texto),
 #: contado em unidades de código UTF-16. Texto maior precisa ser fatiado em vários
 #: itens, que o Notion concatena no mesmo campo.

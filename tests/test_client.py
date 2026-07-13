@@ -376,3 +376,58 @@ def test_enviar_arquivo_erro_no_send_levanta():
     client = criar_client()
     with pytest.raises(NotionHTTPError):
         client.enviar_arquivo(b"x", "a.bin")
+
+
+def test_enviar_arquivo_acima_do_limite_levanta():
+    from notion_starter.constants import NOTION_UPLOAD_MAX_BYTES
+
+    client = criar_client()
+    grande = b"\0" * (NOTION_UPLOAD_MAX_BYTES + 1)
+    with pytest.raises(ValueError, match="20 MB"):
+        client.enviar_arquivo(grande, "grande.bin")
+
+
+@responses.activate
+def test_enviar_arquivo_retenta_send_em_429(monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    responses.add(
+        responses.POST, f"{NOTION_BASE_URL}/file_uploads", json={"id": "u2"}, status=200
+    )
+    responses.add(
+        responses.POST,
+        f"{NOTION_BASE_URL}/file_uploads/u2/send",
+        json={"message": "rate limited"},
+        status=429,
+    )
+    responses.add(
+        responses.POST,
+        f"{NOTION_BASE_URL}/file_uploads/u2/send",
+        json={"id": "u2", "status": "uploaded"},
+        status=200,
+    )
+    client = NotionClient(token=TOKEN, max_retries=2, backoff_base=0.0)
+    uid = client.enviar_arquivo(b"x", "a.bin")
+    assert uid == "u2"
+    assert len(responses.calls) == 3
+
+
+@responses.activate
+def test_enviar_arquivo_falha_de_rede_no_send_retenta(monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    responses.add(
+        responses.POST, f"{NOTION_BASE_URL}/file_uploads", json={"id": "u3"}, status=200
+    )
+    responses.add(
+        responses.POST,
+        f"{NOTION_BASE_URL}/file_uploads/u3/send",
+        body=requests.ConnectionError("queda de rede"),
+    )
+    responses.add(
+        responses.POST,
+        f"{NOTION_BASE_URL}/file_uploads/u3/send",
+        json={"id": "u3", "status": "uploaded"},
+        status=200,
+    )
+    client = NotionClient(token=TOKEN, max_retries=1, backoff_base=0.0)
+    uid = client.enviar_arquivo(b"x", "a.bin")
+    assert uid == "u3"

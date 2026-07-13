@@ -29,6 +29,7 @@ from .constants import (
     NOTION_TIMEOUT_SECONDS,
     NOTION_TOKEN_ENV,
     NOTION_TOKEN_PREFIX,
+    NOTION_UPLOAD_MAX_BYTES,
     NOTION_VERSION,
 )
 from .exceptions import (
@@ -1028,10 +1029,20 @@ class NotionClient:
             O ``id`` do ``file_upload`` pronto para ser referenciado.
 
         Raises:
-            NotionHTTPError: Se a criação ou o envio falharem.
+            ValueError: Se o arquivo exceder o limite de parte única (20 MB).
+            NotionHTTPError: Se a criação ou o envio falharem após esgotadas
+                as retentativas.
+            NotionConnectionError: Em falha de rede ou timeout no envio após
+                esgotadas as retentativas.
         """
 
         nome_limpo = _validar_identificador(nome_arquivo, "nome_arquivo")
+        if len(conteudo) > NOTION_UPLOAD_MAX_BYTES:
+            raise ValueError(
+                f"Arquivo '{nome_limpo}' tem {len(conteudo)} bytes e excede o "
+                f"limite de {NOTION_UPLOAD_MAX_BYTES} bytes (20 MB) do upload "
+                f"em parte única da File Upload API."
+            )
         criado = self._request_json(
             method="POST",
             path="/file_uploads",
@@ -1039,20 +1050,95 @@ class NotionClient:
             idempotente=False,
         )
         upload_id = str(criado["id"])
-        url = f"{self._base_url}/file_uploads/{upload_id}/send"
+        self._enviar_multipart(
+            path=f"/file_uploads/{upload_id}/send",
+            files={"file": (nome_limpo, conteudo, content_type)},
+        )
+        return upload_id
+
+    def _enviar_multipart(
+        self,
+        *,
+        path: str,
+        files: dict[str, tuple[str, bytes, str]],
+    ) -> None:
+        """Executa um POST ``multipart/form-data`` com retry e backoff.
+
+        Espelha a política de resiliência de :meth:`_request_json` para o
+        passo de envio da File Upload API, que não é JSON: enquanto o envio
+        não é concluído com sucesso, repeti-lo preserva o mesmo efeito, então
+        erros transitórios (429/5xx e falhas de rede) são retentados com
+        backoff exponencial, respeitando ``Retry-After``.
+
+        Args:
+            path: Caminho relativo à URL base.
+            files: Mapeamento ``campo -> (nome, conteúdo, content_type)`` no
+                formato aceito pelo ``requests``.
+
+        Raises:
+            NotionHTTPError: Se a API responder 4xx/5xx após esgotadas as
+                retentativas.
+            NotionConnectionError: Em falha de rede ou timeout após esgotadas
+                as retentativas.
+        """
+
+        url = f"{self._base_url}{path}"
         headers = {
             "Authorization": f"Bearer {self._token}",
             "Notion-Version": self._version,
         }
-        resp = requests.post(
-            url,
-            headers=headers,
-            files={"file": (nome_limpo, conteudo, content_type)},
-            timeout=self._timeout,
-        )
-        if resp.status_code >= 400:
+        total_tentativas = self._max_retries + 1
+
+        for tentativa in range(total_tentativas):
+            try:
+                resp = requests.post(
+                    url,
+                    headers=headers,
+                    files=files,
+                    timeout=self._timeout,
+                )
+            except requests.RequestException as exc:
+                if tentativa + 1 < total_tentativas:
+                    espera = self._backoff_base * (2**tentativa)
+                    logger.warning(
+                        "Retentativa %d/%d após erro de conexão no upload",
+                        tentativa + 1,
+                        self._max_retries,
+                        extra={"path": path, "error": str(exc)},
+                    )
+                    time.sleep(espera)
+                    continue
+                logger.error(
+                    "Erro de conexão com o Notion no upload",
+                    extra={"path": path, "error": str(exc)},
+                )
+                raise NotionConnectionError(str(exc)) from exc
+
+            if resp.status_code < 400:
+                return
+
+            if (
+                resp.status_code in NOTION_RETRYABLE_STATUS_CODES
+                and tentativa + 1 < total_tentativas
+            ):
+                espera = self._calcular_espera(resp, tentativa)
+                logger.warning(
+                    "Retentativa %d/%d após HTTP %d no upload",
+                    tentativa + 1,
+                    self._max_retries,
+                    resp.status_code,
+                    extra={"path": path},
+                )
+                time.sleep(espera)
+                continue
+
+            logger.error(
+                "Erro HTTP do Notion no upload",
+                extra={"status_code": resp.status_code, "path": path},
+            )
             raise NotionHTTPError(resp.status_code, resp.text)
-        return upload_id
+
+        raise RuntimeError("Fluxo de upload terminou sem resposta.")
 
     # -- Blocos (conteúdo) -------------------------------------------------
 
