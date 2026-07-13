@@ -292,3 +292,87 @@ def test_buscar_rejeita_page_size_invalido():
     client = criar_client()
     with pytest.raises(ValueError):
         client.buscar(page_size=0)
+
+
+# -- Re-parent e upload (novas primitivas) ---------------------------------
+
+
+@responses.activate
+def test_mover_pagina_envia_novo_parent():
+    responses.add(
+        responses.PATCH,
+        f"{NOTION_BASE_URL}/pages/pag1",
+        json={"id": "pag1"},
+        status=200,
+    )
+    client = criar_client()
+    client.mover_pagina("pag1", "destino1")
+    corpo = responses.calls[0].request.body
+    assert b'"parent"' in corpo
+    assert b'"page_id"' in corpo
+    assert b"destino1" in corpo
+
+
+@responses.activate
+def test_mover_pagina_aceita_database_como_pai():
+    responses.add(
+        responses.PATCH, f"{NOTION_BASE_URL}/pages/pag1", json={"id": "pag1"}, status=200
+    )
+    client = criar_client()
+    client.mover_pagina("pag1", "db1", tipo_pai="database_id")
+    assert b'"database_id"' in responses.calls[0].request.body
+
+
+def test_mover_pagina_tipo_pai_invalido_levanta():
+    client = criar_client()
+    with pytest.raises(ValueError):
+        client.mover_pagina("pag1", "destino1", tipo_pai="workspace")
+
+
+@responses.activate
+def test_mover_database_usa_versao_data_source():
+    responses.add(
+        responses.PATCH, f"{NOTION_BASE_URL}/databases/db1", json={"id": "db1"}, status=200
+    )
+    client = criar_client()
+    client.mover_database("db1", "destino1")
+    headers = responses.calls[0].request.headers
+    assert headers["Notion-Version"] == "2025-09-03"
+    assert b"destino1" in responses.calls[0].request.body
+
+
+@responses.activate
+def test_enviar_arquivo_faz_dois_passos_e_retorna_id():
+    responses.add(
+        responses.POST,
+        f"{NOTION_BASE_URL}/file_uploads",
+        json={"id": "upload42"},
+        status=200,
+    )
+    responses.add(
+        responses.POST,
+        f"{NOTION_BASE_URL}/file_uploads/upload42/send",
+        json={"id": "upload42", "status": "uploaded"},
+        status=200,
+    )
+    client = criar_client()
+    uid = client.enviar_arquivo(b"conteudo", "relatorio.docx", "application/msword")
+    assert uid == "upload42"
+    assert len(responses.calls) == 2
+    assert responses.calls[1].request.url.endswith("/file_uploads/upload42/send")
+
+
+@responses.activate
+def test_enviar_arquivo_erro_no_send_levanta():
+    responses.add(
+        responses.POST, f"{NOTION_BASE_URL}/file_uploads", json={"id": "u1"}, status=200
+    )
+    responses.add(
+        responses.POST,
+        f"{NOTION_BASE_URL}/file_uploads/u1/send",
+        json={"message": "too large"},
+        status=400,
+    )
+    client = criar_client()
+    with pytest.raises(NotionHTTPError):
+        client.enviar_arquivo(b"x", "a.bin")

@@ -932,6 +932,128 @@ class NotionClient:
             idempotente=True,
         )
 
+    def mover_pagina(
+        self,
+        page_id: str,
+        novo_pai_id: str,
+        *,
+        tipo_pai: str = "page_id",
+    ) -> dict[str, Any]:
+        """Re-parenteia (move) uma página para outra página ou database.
+
+        A API do Notion aceita alterar o ``parent`` de uma página via ``PATCH``,
+        o que efetivamente a move de lugar sem recriá-la — preservando conteúdo,
+        propriedades e links. Útil para consolidar/reorganizar uma workspace.
+
+        Observação importante: mover uma página que **contém databases** é
+        aceito pela API (``200``) mas silenciosamente ignorado; nesse caso, mova
+        as databases uma a uma com :meth:`mover_database` e descarte a página
+        vazia.
+
+        Args:
+            page_id: ID da página a mover.
+            novo_pai_id: ID do novo pai (página ou database).
+            tipo_pai: ``"page_id"`` (padrão) ou ``"database_id"``.
+
+        Returns:
+            A resposta JSON da página atualizada.
+
+        Raises:
+            NotionConfigurationError: Se algum identificador for inválido.
+            ValueError: Se ``tipo_pai`` não for reconhecido.
+        """
+
+        limpo = _validar_identificador(page_id, "page_id")
+        pai_limpo = _validar_identificador(novo_pai_id, "novo_pai_id")
+        if tipo_pai not in ("page_id", "database_id"):
+            raise ValueError("tipo_pai deve ser 'page_id' ou 'database_id'.")
+        payload = {"parent": {"type": tipo_pai, tipo_pai: pai_limpo}}
+        return self._request_json(
+            method="PATCH",
+            path=f"/pages/{limpo}",
+            payload=payload,
+            idempotente=True,
+        )
+
+    def mover_database(self, database_id: str, novo_pai_id: str) -> dict[str, Any]:
+        """Re-parenteia (move) um database para outra página.
+
+        Move um database inteiro — com todas as suas linhas — para outra página,
+        sem recriá-lo. Diferente de :meth:`mover_pagina`, a rota de databases
+        exige a versão de API 2025-09-03 (a mesma dos *data sources*); a versão
+        padrão das demais chamadas não é alterada.
+
+        Args:
+            database_id: ID do database a mover.
+            novo_pai_id: ID da página que receberá o database.
+
+        Returns:
+            A resposta JSON do database atualizado.
+
+        Raises:
+            NotionConfigurationError: Se algum identificador for inválido.
+        """
+
+        limpo = _validar_identificador(database_id, "database_id")
+        pai_limpo = _validar_identificador(novo_pai_id, "novo_pai_id")
+        payload = {"parent": {"type": "page_id", "page_id": pai_limpo}}
+        return self._request_json(
+            method="PATCH",
+            path=f"/databases/{limpo}",
+            payload=payload,
+            idempotente=True,
+            version=NOTION_DATA_SOURCE_VERSION,
+        )
+
+    def enviar_arquivo(
+        self,
+        conteudo: bytes,
+        nome_arquivo: str,
+        content_type: str = "application/octet-stream",
+    ) -> str:
+        """Envia um arquivo (upload direto) e devolve o ``file_upload`` id.
+
+        Implementa o fluxo de dois passos da *File Upload API* do Notion para
+        arquivos de parte única (até 20 MB): (1) cria um ``file_upload`` e
+        (2) envia os bytes por ``multipart/form-data``. O id retornado pode ser
+        anexado a uma propriedade ``files`` ou a um bloco, via
+        :func:`notion_starter.properties.arquivo_enviado`.
+
+        Args:
+            conteudo: Bytes do arquivo.
+            nome_arquivo: Nome do arquivo (com extensão).
+            content_type: MIME type do arquivo.
+
+        Returns:
+            O ``id`` do ``file_upload`` pronto para ser referenciado.
+
+        Raises:
+            NotionHTTPError: Se a criação ou o envio falharem.
+        """
+
+        nome_limpo = _validar_identificador(nome_arquivo, "nome_arquivo")
+        criado = self._request_json(
+            method="POST",
+            path="/file_uploads",
+            payload={"filename": nome_limpo, "content_type": content_type},
+            idempotente=False,
+        )
+        upload_id = str(criado["id"])
+        url = f"{self._base_url}/file_uploads/{upload_id}/send"
+        headers = {
+            "Authorization": f"Bearer {self._token}",
+            "Notion-Version": self._version,
+        }
+        resp = requests.post(
+            url,
+            headers=headers,
+            files={"file": (nome_limpo, conteudo, content_type)},
+            timeout=self._timeout,
+        )
+        if resp.status_code >= 400:
+            raise NotionHTTPError(resp.status_code, resp.text)
+        return upload_id
+
     # -- Blocos (conteúdo) -------------------------------------------------
 
     def ler_blocos(

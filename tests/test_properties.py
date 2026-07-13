@@ -64,3 +64,12 @@ def test_date_com_date_e_intervalo():
     resultado = p.date(date(2026, 6, 24), datetime(2026, 6, 25, 10, 0))
     assert resultado["date"]["start"] == "2026-06-24"
     assert resultado["date"]["end"].startswith("2026-06-25T10:00")
+
+
+def test_arquivo_enviado_monta_files_com_upload():
+    from notion_starter import properties as p
+
+    valor = p.arquivo_enviado("upload42", "relatorio.docx")
+    assert valor["files"][0]["type"] == "file_upload"
+    assert valor["files"][0]["file_upload"]["id"] == "upload42"
+    assert valor["files"][0]["name"] == "relatorio.docx"
