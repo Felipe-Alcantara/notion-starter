@@ -378,6 +378,16 @@ def _nome_da_propriedade_titulo(schema: dict[str, Any]) -> str:
     return "Nome"
 
 
+def _coluna_compativel(schema: dict[str, Any], nome: str, tipo: str) -> bool:
+    """A coluna existe no destino **com o tipo esperado**?
+
+    Nome igual com tipo diferente (ex.: ``Fonte`` como texto) rejeitaria a
+    linha inteira com 400 — o mesmo problema de coluna inexistente.
+    """
+    definicao = schema.get(nome)
+    return isinstance(definicao, dict) and definicao.get("type") == tipo
+
+
 def _propriedades_de_item(
     item: ItemColetado, schema: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -393,11 +403,11 @@ def _propriedades_de_item(
     # um database sem "Nome"/"Fonte"/"Origem" rejeitava a linha inteira.
     nome_titulo = _nome_da_propriedade_titulo(schema) if schema else "Nome"
     props: dict[str, Any] = {nome_titulo: properties.title(_limitar_texto(nome))}
-    if schema is None or "Fonte" in schema:
+    if schema is None or _coluna_compativel(schema, "Fonte", "select"):
         props["Fonte"] = properties.select(tipo_fonte)
-    if item.conteudo and (schema is None or "Descrição" in schema):
+    if item.conteudo and (schema is None or _coluna_compativel(schema, "Descrição", "rich_text")):
         props["Descrição"] = properties.rich_text(_limitar_texto(item.conteudo))
-    if item.origem and (schema is None or "Origem" in schema):
+    if item.origem and (schema is None or _coluna_compativel(schema, "Origem", "rich_text")):
         props["Origem"] = properties.rich_text(_limitar_texto(item.origem))
     # Propriedades tipadas da fonte por último: são mais específicas e podem
     # sobrescrever os campos genéricos (exceto os reservados acima).
@@ -446,9 +456,10 @@ def ingerir(
         )
 
     schema = _schema_do_database(client, db_id)
-    # Sem a coluna "Origem" no destino não há chave de idempotência: filtrar
-    # por ela devolveria 400, então cada item é criado direto.
-    upsert_por_origem = schema is None or "Origem" in schema
+    # Sem a coluna "Origem" (rich_text) no destino não há chave de
+    # idempotência: filtrar por ela devolveria 400, então cada item é criado
+    # direto.
+    upsert_por_origem = schema is None or _coluna_compativel(schema, "Origem", "rich_text")
 
     resultado = ResultadoIngestao()
     for item in fonte.coletar():

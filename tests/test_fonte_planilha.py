@@ -160,6 +160,37 @@ def test_ingerir_adapta_titulo_e_campos_genericos_ao_schema(planilha_csv):
     assert cliente.consultas == 0
 
 
+def test_ingerir_ignora_coluna_generica_com_tipo_incompativel(planilha_csv):
+    # "Fonte" e "Origem" existem no destino, mas com tipos diferentes dos que
+    # a ingestão envia (select/rich_text): usá-las devolveria 400 igual a
+    # coluna inexistente, então são puladas — inclusive no filtro de upsert.
+    class ClienteComTiposDiferentes(ClienteFake):
+        def __init__(self):
+            super().__init__()
+            self.consultas = 0
+
+        def get_database(self, database_id):
+            return {
+                "properties": {
+                    "Nome": {"type": "title"},
+                    "Fonte": {"type": "rich_text"},
+                    "Origem": {"type": "select"},
+                }
+            }
+
+        def consultar_database(self, database_id, page_size=1, filtro=None):
+            self.consultas += 1
+            return []
+
+    cliente = ClienteComTiposDiferentes()
+    resultado = ingerir(FontePlanilha(planilha_csv), client=cliente, database_id="db1")
+
+    assert resultado.criados == 2
+    props = cliente.criadas[0]
+    assert "Fonte" not in props and "Origem" not in props
+    assert cliente.consultas == 0
+
+
 def test_ingerir_sem_schema_mantem_comportamento_classico(planilha_csv):
     # ClienteFake não tem get_database: a ingestão segue enviando os campos
     # genéricos fixos e consultando por Origem (compatibilidade).
