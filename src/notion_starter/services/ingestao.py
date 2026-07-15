@@ -358,7 +358,29 @@ def _limitar_texto(valor: str) -> str:
     return valor[:LIMITE_TEXTO_NOTION]
 
 
-def _propriedades_de_item(item: ItemColetado) -> dict[str, Any]:
+def _schema_do_database(client: NotionClient, database_id: str) -> dict[str, Any] | None:
+    """Propriedades do database de destino, ou ``None`` se não der para ler.
+
+    Sem o schema (clientes antigos, falha de rede), a ingestão mantém o
+    comportamento clássico de enviar ``Nome``/``Fonte``/``Origem`` fixos.
+    """
+    try:
+        schema = client.get_database(database_id).get("properties")
+    except Exception:
+        return None
+    return schema or None
+
+
+def _nome_da_propriedade_titulo(schema: dict[str, Any]) -> str:
+    for nome, definicao in schema.items():
+        if isinstance(definicao, dict) and definicao.get("type") == "title":
+            return nome
+    return "Nome"
+
+
+def _propriedades_de_item(
+    item: ItemColetado, schema: dict[str, Any] | None = None
+) -> dict[str, Any]:
     nome = item.nome.strip()
     tipo_fonte = item.tipo_fonte.strip()
     if not nome:
@@ -366,18 +388,21 @@ def _propriedades_de_item(item: ItemColetado) -> dict[str, Any]:
     if not tipo_fonte:
         raise ValueError("ItemColetado.tipo_fonte não pode estar vazio.")
 
-    props: dict[str, Any] = {
-        "Nome": properties.title(_limitar_texto(nome)),
-        "Fonte": properties.select(tipo_fonte),
-    }
-    if item.conteudo:
+    # Com o schema em mãos, o título vai para a propriedade-título real do
+    # database e os campos genéricos só entram se a coluna existir — sem isso,
+    # um database sem "Nome"/"Fonte"/"Origem" rejeitava a linha inteira.
+    nome_titulo = _nome_da_propriedade_titulo(schema) if schema else "Nome"
+    props: dict[str, Any] = {nome_titulo: properties.title(_limitar_texto(nome))}
+    if schema is None or "Fonte" in schema:
+        props["Fonte"] = properties.select(tipo_fonte)
+    if item.conteudo and (schema is None or "Descrição" in schema):
         props["Descrição"] = properties.rich_text(_limitar_texto(item.conteudo))
-    if item.origem:
+    if item.origem and (schema is None or "Origem" in schema):
         props["Origem"] = properties.rich_text(_limitar_texto(item.origem))
     # Propriedades tipadas da fonte por último: são mais específicas e podem
     # sobrescrever os campos genéricos (exceto os reservados acima).
     for nome_prop, valor in item.propriedades.items():
-        if nome_prop not in ("Nome", "Fonte", "Origem"):
+        if nome_prop not in (nome_titulo, "Fonte", "Origem"):
             props[nome_prop] = valor
     return props
 
@@ -420,12 +445,19 @@ def ingerir(
             "NOTION_DATABASE_ID no ambiente."
         )
 
+    schema = _schema_do_database(client, db_id)
+    # Sem a coluna "Origem" no destino não há chave de idempotência: filtrar
+    # por ela devolveria 400, então cada item é criado direto.
+    upsert_por_origem = schema is None or "Origem" in schema
+
     resultado = ResultadoIngestao()
     for item in fonte.coletar():
         resultado.itens_processados += 1
         try:
-            props = _propriedades_de_item(item)
-            existente = _pagina_por_origem(client, db_id, item.origem)
+            props = _propriedades_de_item(item, schema)
+            existente = (
+                _pagina_por_origem(client, db_id, item.origem) if upsert_por_origem else None
+            )
             if existente and existente.get("id"):
                 client.atualizar_pagina(str(existente["id"]), props)
                 resultado.atualizados += 1
