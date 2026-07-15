@@ -439,6 +439,9 @@ def ingerir(
             identificacao = item.nome.strip() or "(sem nome)"
             if item.origem:
                 identificacao = f"{identificacao} ({item.origem})"
-            resultado.falhas.append(f"{identificacao}: {exc}")
+            # Exceções sem mensagem (ex.: ``KeyError`` vazio) ainda precisam
+            # de um motivo legível no resumo.
+            motivo = str(exc) or type(exc).__name__
+            resultado.falhas.append(f"{identificacao}: {motivo}")
 
     return resultado
