@@ -63,12 +63,18 @@ class ItemColetado:
 
 @dataclass
 class ResultadoIngestao:
-    """Resumo de uma operação de ingestão em lote."""
+    """Resumo de uma operação de ingestão em lote.
+
+    ``falhas`` descreve cada item que falhou (``"nome (origem): motivo"``),
+    na ordem em que os erros aconteceram — sem isso, ``erros`` é um contador
+    cego e o chamador não tem como diagnosticar o lote.
+    """
 
     criados: int = 0
     atualizados: int = 0
     erros: int = 0
     itens_processados: int = 0
+    falhas: list[str] = field(default_factory=list)
 
 
 class FonteArquivos:
@@ -426,9 +432,13 @@ def ingerir(
             else:
                 client.criar_pagina(db_id, props)
                 resultado.criados += 1
-        except Exception:
+        except Exception as exc:
             # Ingestão é lote: uma fonte inválida ou item rejeitado não impede
             # os itens seguintes. O resumo mantém a falha observável.
             resultado.erros += 1
+            identificacao = item.nome.strip() or "(sem nome)"
+            if item.origem:
+                identificacao = f"{identificacao} ({item.origem})"
+            resultado.falhas.append(f"{identificacao}: {exc}")
 
     return resultado

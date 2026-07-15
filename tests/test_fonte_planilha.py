@@ -127,6 +127,20 @@ class ClienteFake:
         return {"id": page_id}
 
 
+def test_ingerir_relata_motivo_de_cada_falha(planilha_csv):
+    class ClienteQueRejeita(ClienteFake):
+        def criar_pagina(self, database_id, props):
+            raise RuntimeError("Nome is not a property that exists")
+
+    resultado = ingerir(FontePlanilha(planilha_csv), client=ClienteQueRejeita(), database_id="db1")
+
+    assert resultado.erros == 2
+    assert len(resultado.falhas) == 2
+    assert resultado.falhas[0] == (
+        "Conta A (contas.csv:2): Nome is not a property that exists"
+    )
+
+
 def test_ingerir_grava_propriedades_tipadas_da_planilha(planilha_csv):
     fonte = FontePlanilha(planilha_csv, tipos={"Seguidores": "numero"})
     cliente = ClienteFake()
