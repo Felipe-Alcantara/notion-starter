@@ -12,6 +12,21 @@
 
 ---
 
+## 📊 ESTADO ATUAL (RESUMO VIVO)
+
+Última atualização: [2026-07-18]
+
+- Fase: biblioteca base estável, consumida pelo CLI e pelo app do ecossistema.
+- Qualidade: 235 testes verdes e `ruff` limpo; CI cobre Python 3.10–3.13.
+- Documentação: README alinhado ao Felixo System Design e contrato de qualidade
+  centralizado em `QUALIDADE.md`.
+- Próximos passos abertos: mais tipos de propriedade/bloco e escrita em data
+  sources.
+- Risco conhecido: consumidores devem fixar suas próprias resoluções de
+  dependências quando precisarem de builds reproduzíveis.
+
+---
+
 ## 🎯 OBJETIVO DO PROJETO
 
 [2026-07-02] `notion-starter` é a biblioteca Python base do ecossistema: cliente
@@ -80,6 +95,12 @@ pelo `notion-tasks-cli` e pelo `notion-workspace-app`.
   `properties.schema_propriedade` e `services/anexos.anexar_arquivo` (upload +
   propriedade files preservando anexos). Validação: 230 testes verdes, ruff
   limpo, CI verde.
+- [2026-07-18] ✅ Documentação alinhada ao Felixo System Design: README passou a
+  ter badges, índice, árvore real, guia de uso e rodapé open source;
+  `QUALIDADE.md` centralizou o gate e registrou a exceção motivada de versões
+  mínimas para uma biblioteca instalável. Motivo: tornar setup, manutenção e
+  critérios de pronto verificáveis sem quebrar a resolução dos consumidores.
+  Validação: 235 testes verdes e `ruff` limpo.
 
 ---
 
