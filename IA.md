@@ -153,6 +153,20 @@ pelo `notion-tasks-cli` e pelo `notion-workspace-app`.
   `anexar_blocos`; 251 testes do notion-starter e 140 do notion-tasks-cli
   seguem verdes, ruff limpo em ambos.
 
+- [2026-07-23] ✅ Correção: `montar_estrutura_projeto` criava "Próximos passos"
+  e "Documentações" com um schema mínimo genérico (título + Observações), que
+  não batia com o schema real observado nas páginas de projeto existentes do
+  workspace ("Próximos passos": Tarefa/Status/Prioridade/Concluída/
+  Observações; "Documentações": Documento/Tipo/Status/Criado em/Atualizado
+  em/URL/Observações — com `select` de opções coerentes, não `rich_text`
+  solto). `DATABASES_PLANEJAMENTO` virou um dict `título -> schema` em vez de
+  uma tupla de títulos. Motivo: ao aplicar a ferramenta na página real do
+  projeto Audiofy, os databases criados ficaram visivelmente fora do padrão
+  das páginas de referência lidas anteriormente. Validação: teste ajustado
+  para checar as colunas específicas de cada database (não mais um schema
+  genérico); 251 testes do notion-starter e 140 do notion-tasks-cli seguem
+  verdes, ruff limpo.
+
 ---
 
 Ideias abertas à contribuição: cobertura de mais tipos de propriedade do Notion,

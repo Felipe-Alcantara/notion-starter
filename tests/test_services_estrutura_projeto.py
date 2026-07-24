@@ -148,10 +148,14 @@ def test_montar_estrutura_projeto_cria_o_padrao_completo():
     assert resumo.databases_criados == list(svc.DATABASES_PLANEJAMENTO)
     assert len(cliente.subpaginas_criadas) == 4
     assert len(cliente.databases_criados) == 2
-    # Cada database criado tem título + Observações no schema mínimo.
-    for _, _, propriedades in cliente.databases_criados:
-        assert "Nome" in propriedades
-        assert "Observações" in propriedades
+    # Cada database criado usa o schema real do database correspondente.
+    criados = dict((titulo, props) for _, titulo, props in cliente.databases_criados)
+    assert "Tarefa" in criados["Próximos passos"]
+    assert "Status" in criados["Próximos passos"]
+    assert "Observações" in criados["Próximos passos"]
+    assert "Documento" in criados["Documentações"]
+    assert "URL" in criados["Documentações"]
+    assert "Observações" in criados["Documentações"]
 
 
 def test_montar_estrutura_projeto_rejeita_pagina_vazia():

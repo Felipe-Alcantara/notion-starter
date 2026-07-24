@@ -42,8 +42,58 @@ SUBPAGINAS_ACOMPANHAMENTO: tuple[str, ...] = (
     "Decisões e registros",
 )
 
-#: Títulos dos databases do tópico "## Planejamento e documentação", nesta ordem.
-DATABASES_PLANEJAMENTO: tuple[str, ...] = ("Próximos passos", "Documentações")
+#: Schema de cada database do tópico "## Planejamento e documentação", na
+#: ordem em que são criados. Nomes e tipos de coluna vêm do padrão observado
+#: no workspace "Central pessoal" (ver DESIGN-WORKSPACE-NOTION.md).
+DATABASES_PLANEJAMENTO: dict[str, dict[str, dict[str, object]]] = {
+    "Próximos passos": {
+        "Tarefa": {"title": {}},
+        "Status": {
+            "select": {
+                "options": [
+                    {"name": "A fazer", "color": "default"},
+                    {"name": "Em andamento", "color": "yellow"},
+                    {"name": "Feito", "color": "green"},
+                ]
+            }
+        },
+        "Prioridade": {
+            "select": {
+                "options": [
+                    {"name": "Alta", "color": "red"},
+                    {"name": "Média", "color": "yellow"},
+                    {"name": "Baixa", "color": "gray"},
+                ]
+            }
+        },
+        "Concluída": {"checkbox": {}},
+        "Observações": {"rich_text": {}},
+    },
+    "Documentações": {
+        "Documento": {"title": {}},
+        "Tipo": {
+            "select": {
+                "options": [
+                    {"name": "Referência", "color": "blue"},
+                    {"name": "Checklist", "color": "orange"},
+                    {"name": "Relatório", "color": "purple"},
+                ]
+            }
+        },
+        "Status": {
+            "select": {
+                "options": [
+                    {"name": "Atualizado", "color": "green"},
+                    {"name": "Desatualizado", "color": "yellow"},
+                ]
+            }
+        },
+        "Criado em": {"date": {}},
+        "Atualizado em": {"date": {}},
+        "URL": {"url": {}},
+        "Observações": {"rich_text": {}},
+    },
+}
 
 
 def _cliente_padrao() -> NotionClient:
@@ -244,7 +294,10 @@ def montar_estrutura_projeto(
     Escreve ``## Acompanhamento`` + divisória, cria as 4 subpáginas de
     :data:`SUBPAGINAS_ACOMPANHAMENTO` (vazias), escreve
     ``## Planejamento e documentação`` + divisória e cria os 2 databases de
-    :data:`DATABASES_PLANEJAMENTO` (schema mínimo: título + Observações). É a
+    :data:`DATABASES_PLANEJAMENTO`, cada um com o schema real observado no
+    workspace de referência (Tarefa/Status/Prioridade/Concluída/Observações em
+    "Próximos passos"; Documento/Tipo/Status/datas/URL/Observações em
+    "Documentações"). É a
     forma "do zero" de aplicar o padrão; para copiar de um projeto existente
     (com eventuais variações), use :func:`clonar_estrutura_projeto`.
 
@@ -281,15 +334,8 @@ def montar_estrutura_projeto(
             {"type": "divider", "divider": {}},
         ],
     )
-    for titulo in DATABASES_PLANEJAMENTO:
-        cli.criar_database(
-            pagina_id,
-            titulo,
-            propriedades={
-                "Nome": {"title": {}},
-                "Observações": {"rich_text": {}},
-            },
-        )
+    for titulo, propriedades in DATABASES_PLANEJAMENTO.items():
+        cli.criar_database(pagina_id, titulo, propriedades=propriedades)
         resumo.databases_criados.append(titulo)
 
     return resumo
