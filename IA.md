@@ -116,6 +116,23 @@ pelo `notion-tasks-cli` e pelo `notion-workspace-app`.
   235 testes do notion-starter e 132 do notion-tasks-cli seguem verdes, ruff
   limpo em ambos.
 
+- [2026-07-23] ✅ Novo módulo `services/estrutura_projeto.py` com três casos de
+  uso para a moldura fixa de projeto do workspace (README + `## Acompanhamento`
+  com 4 subpáginas + `## Planejamento e documentação` com 2 databases, ver
+  `DESIGN-WORKSPACE-NOTION.md` no hub): `inspecionar_estrutura` (lê
+  recursivamente subpáginas/databases de uma página de referência, read-only),
+  `clonar_estrutura_projeto` (recria a forma — títulos de subpágina + schema de
+  databases via `clonar_database` — em outra página, sem herdar conteúdo) e
+  `montar_estrutura_projeto` (aplica o padrão do zero). Também
+  `services/conteudo.criar_subpagina`, que expõe `client.criar_subpagina` como
+  caso de uso reutilizável (antes só usado internamente pelo README do
+  GitHub). Motivo: montar essa estrutura manualmente (como feito para o
+  projeto Audiofy) exigiu inspecionar várias páginas de exemplo bloco a bloco,
+  sem nenhuma ferramenta reutilizável — o padrão documentado não tinha
+  automação correspondente. Validação: 9 novos testes em
+  `notion-tasks-cli/tests/test_services_estrutura_projeto.py`; 244 testes do
+  notion-starter e 137 do notion-tasks-cli seguem verdes, ruff limpo em ambos.
+
 ---
 
 Ideias abertas à contribuição: cobertura de mais tipos de propriedade do Notion,

@@ -232,6 +232,46 @@ def escrever_conteudo(
     return len(blocos)
 
 
+def criar_subpagina(
+    pagina_pai_id: str,
+    titulo: str,
+    *,
+    markdown: str | None = None,
+    cliente: NotionClient | None = None,
+) -> dict[str, Any]:
+    """Cria uma página filha simples dentro de outra página.
+
+    Diferente de uma linha de database, esta é uma página **solta**, pendurada
+    diretamente na página-pai — o mesmo padrão usado para organizar READMEs de
+    repositório e as subpáginas de acompanhamento de projeto (Estado atual,
+    Trabalho em andamento, Problemas encontrados, Decisões e registros — ver
+    ``DESIGN-WORKSPACE-NOTION.md`` no hub Automações do Notion).
+
+    Args:
+        pagina_pai_id: ID da página que receberá a subpágina.
+        titulo: Título da subpágina.
+        markdown: Conteúdo opcional (em Markdown) já preenchido na criação.
+        cliente: Cliente Notion opcional (injeção para testes/uso alternativo).
+
+    Returns:
+        A resposta crua da API do Notion para a subpágina criada.
+
+    Raises:
+        ValueError: Se ``pagina_pai_id`` ou ``titulo`` forem vazios.
+    """
+
+    pagina_pai_id = (pagina_pai_id or "").strip()
+    titulo = (titulo or "").strip()
+    if not pagina_pai_id:
+        raise ValueError("pagina_pai_id é obrigatório.")
+    if not titulo:
+        raise ValueError("titulo é obrigatório.")
+
+    blocos = markdown_para_blocos(markdown) if markdown else None
+    cliente = cliente or _cliente_padrao()
+    return cliente.criar_subpagina(pagina_pai_id, titulo, blocos=blocos)
+
+
 def editar_bloco(
     block_id: str,
     markdown: str,
