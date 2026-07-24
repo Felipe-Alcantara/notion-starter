@@ -133,6 +133,26 @@ pelo `notion-tasks-cli` e pelo `notion-workspace-app`.
   `notion-tasks-cli/tests/test_services_estrutura_projeto.py`; 244 testes do
   notion-starter e 137 do notion-tasks-cli seguem verdes, ruff limpo em ambos.
 
+- [2026-07-23] ✅ `NotionClient.anexar_blocos` ganhou o parâmetro opcional
+  `apos_bloco_id`, usando `position: after_block` da API do Notion (confirmado
+  na doc oficial, `developers.notion.com/reference/patch-block-children` —
+  substitui o antigo `after` no nível raiz, hoje legado) para inserir blocos
+  novos depois de um irmão específico, não só no final. Novo
+  `services/reordenacao.py` com `reordenar_bloco`: como a API do Notion não
+  tem endpoint para mover um bloco existente, a implementação apaga e recria
+  na posição pedida — sempre grava um backup em JSON do bloco original antes
+  de apagar. **Risco documentado e ativamente bloqueado por padrão**: para
+  `child_page`/`child_database`, apagar e recriar gera um **ID novo**,
+  quebrando links/backlinks/referências externas salvas para o ID antigo; a
+  função levanta `BlocoArriscadoError` nesses tipos a menos que o chamador
+  passe `forcar_tipos_arriscados=True` explicitamente. Motivo: precisei
+  reordenar um database solto numa página de projeto (Audiofy) e não havia
+  ferramenta alguma para isso — o único caminho seria apagar manualmente e
+  reimportar dados. Validação: 7 novos testes em
+  `tests/test_services_reordenacao.py`, mais os testes existentes de
+  `anexar_blocos`; 251 testes do notion-starter e 140 do notion-tasks-cli
+  seguem verdes, ruff limpo em ambos.
+
 ---
 
 Ideias abertas à contribuição: cobertura de mais tipos de propriedade do Notion,

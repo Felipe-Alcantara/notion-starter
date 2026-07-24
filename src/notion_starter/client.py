@@ -131,10 +131,11 @@ class PageArchivePayload(TypedDict):
     archived: bool
 
 
-class BlocksAppendPayload(TypedDict):
+class BlocksAppendPayload(TypedDict, total=False):
     """Payload para anexar blocos filhos a uma página ou bloco."""
 
     children: list[dict[str, object]]
+    position: dict[str, object]
 
 
 class BlockArchivePayload(TypedDict):
@@ -1254,12 +1255,17 @@ class NotionClient:
         self,
         block_id: str,
         blocos: list[dict[str, object]],
+        *,
+        apos_bloco_id: str | None = None,
     ) -> dict[str, Any]:
-        """Anexa blocos filhos ao final de uma página ou bloco.
+        """Anexa blocos filhos a uma página ou bloco.
 
         Args:
             block_id: ID da página ou do bloco pai.
             blocos: Lista de blocos no formato da API do Notion.
+            apos_bloco_id: Quando informado, insere os novos blocos logo após
+                este bloco irmão (``position: after_block`` da API) em vez de
+                no final da lista de filhos.
 
         Returns:
             A resposta JSON da API (os blocos criados).
@@ -1275,6 +1281,11 @@ class NotionClient:
             raise ValueError("Informe ao menos um bloco para anexar.")
 
         payload: BlocksAppendPayload = {"children": blocos}
+        if apos_bloco_id:
+            payload["position"] = {
+                "type": "after_block",
+                "after_block": {"id": _validar_identificador(apos_bloco_id, "apos_bloco_id")},
+            }
         # Anexar não é idempotente: repetir duplicaria o conteúdo.
         return self._request_json(
             method="PATCH",
