@@ -26,6 +26,7 @@ Pontos de extensão (Open/Closed):
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -438,7 +439,7 @@ def _coletar_repos(
     vistos: set[str] = set()
     for conta in contas:
         try:
-            repos = github_client.listar_repos(conta)
+            repos = _listar_repos_da_entrada(conta, github_client)
         except Exception as exc:  # noqa: BLE001 — registramos e seguimos
             resumo.erros.append(f"listar {conta}: {exc}")
             continue
@@ -451,6 +452,48 @@ def _coletar_repos(
             vistos.add(chave)
             resumo.repos_encontrados += 1
             yield repo
+
+
+_PADRAO_URL_REPO = re.compile(
+    r"^(?:https?://)?github\.com/([^/\s?#]+)/([^/\s?#]+?)(?:\.git)?/?$",
+    re.IGNORECASE,
+)
+
+
+def _repo_completo_da_entrada(entrada: str) -> str | None:
+    """Extrai ``owner/repo`` de uma entrada, se ela apontar para um repositório.
+
+    Aceita ``owner/repo`` puro ou uma URL completa de repositório
+    (``https://github.com/owner/repo``, com ou sem ``.git``). Devolve ``None``
+    quando a entrada é uma conta (login, ``@login`` ou URL de perfil), caso em
+    que o chamador deve listar todos os repositórios do usuário.
+    """
+
+    bruta = (entrada or "").strip()
+    match = _PADRAO_URL_REPO.match(bruta)
+    if match:
+        return f"{match.group(1)}/{match.group(2)}"
+    if "://" in bruta or bruta.lower().startswith("github.com/"):
+        return None  # URL de perfil (sem repo) — trata como conta.
+    sem_arroba = bruta.lstrip("@").rstrip("/")
+    if "/" in sem_arroba:
+        return sem_arroba
+    return None
+
+
+def _listar_repos_da_entrada(entrada: str, github_client: GitHubClient) -> list[RepoInfo]:
+    """Resolve uma entrada de ``contas`` para uma lista de repositórios.
+
+    Aceita tanto uma **conta** (``usuario``, ``@usuario`` ou URL de perfil — todos
+    os repositórios do usuário) quanto um **repositório específico**
+    (``owner/repo`` ou a URL completa do repositório) — útil para trazer só um
+    projeto pontual sem importar a conta inteira.
+    """
+
+    repo_completo = _repo_completo_da_entrada(entrada)
+    if repo_completo:
+        return [github_client.detalhar_repo(repo_completo)]
+    return github_client.listar_repos(entrada)
 
 
 def _exportar_repo(

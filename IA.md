@@ -102,6 +102,20 @@ pelo `notion-tasks-cli` e pelo `notion-workspace-app`.
   critérios de pronto verificáveis sem quebrar a resolução dos consumidores.
   Validação: 235 testes verdes e `ruff` limpo.
 
+- [2026-07-23] ✅ `services/inventario_github.atualizar_repos`/`exportar_repos`
+  passam a aceitar um **repositório específico** em `contas` (`owner/repo` ou
+  URL completa do repo), além de contas inteiras. Nova função privada
+  `_repo_completo_da_entrada` distingue os dois formatos (via `_PADRAO_URL_REPO`
+  e checagem de `/` fora de URL de perfil) e `_listar_repos_da_entrada` chama
+  `GitHubClient.detalhar_repo` nesse caso, em vez de `listar_repos`. Motivo:
+  inventariar um projeto pontual de terceiros (ex.: um repo de outra conta)
+  sem trazer o resto dos repositórios dela para a database. Validação: 6 novos
+  testes em `notion-tasks-cli/tests/test_services_inventario_github.py`
+  (reconhecimento de owner/repo, URL de repo, URL de perfil sem repo, coleta
+  sem duplicar quando o mesmo repo aparece via conta e via entrada avulsa);
+  235 testes do notion-starter e 132 do notion-tasks-cli seguem verdes, ruff
+  limpo em ambos.
+
 ---
 
 Ideias abertas à contribuição: cobertura de mais tipos de propriedade do Notion,
