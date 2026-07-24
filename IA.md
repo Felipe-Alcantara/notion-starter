@@ -182,6 +182,21 @@ pelo `notion-tasks-cli` e pelo `notion-workspace-app`.
   `test_reordenar_bloco_rejeita_child_database_mesmo_com_forcar`; 252 testes
   do notion-starter e 141 do notion-tasks-cli verdes, ruff limpo.
 
+- [2026-07-24] ✅ Novo `services/schema.garantir_coluna`: adiciona uma coluna a
+  um database **já existente**, sem apagar nada. Generaliza o padrão que só
+  existia hardcoded em
+  `inventario_github.garantir_coluna_hash` (que só cuidava da coluna de hash
+  do README) para qualquer nome/tipo de coluna. Usa *data source* quando
+  disponível, cai para o endpoint clássico de `database` caso contrário —
+  mesma estratégia do original. Motivo: nenhuma ferramenta do ecossistema
+  evoluía o schema de um database depois de criado (`criar-database` só
+  define na criação; `editar-linha`/`importar-planilha` só escrevem em
+  colunas existentes) — faltou ao tentar adicionar uma coluna real (Idioma)
+  a um database do workspace da Flávia. TDD: testes escritos e confirmados
+  falhando antes da implementação existir, só então o módulo foi criado.
+  Validação: 4 novos testes em `test_services_schema.py`; 256 testes do
+  notion-starter seguem verdes, ruff limpo.
+
 ---
 
 Ideias abertas à contribuição: cobertura de mais tipos de propriedade do Notion,
