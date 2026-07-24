@@ -167,6 +167,21 @@ pelo `notion-tasks-cli` e pelo `notion-workspace-app`.
   genérico); 251 testes do notion-starter e 140 do notion-tasks-cli seguem
   verdes, ruff limpo.
 
+- [2026-07-23] ✅ Correção crítica em `services/reordenacao.reordenar_bloco`:
+  `child_database` foi movido de `_TIPOS_ARRISCADOS` (bloqueável com
+  `forcar_tipos_arriscados=True`) para uma nova categoria `_TIPOS_IMPOSSIVEIS`,
+  recusada **sempre**, sem flag de escape (`BlocoImpossivelError`, distinta de
+  `BlocoArriscadoError`). Motivo: confirmado em produção (workspace real da
+  Flávia) que apagar+recriar um `child_database` via `anexar_blocos` **nunca
+  funciona** — a API do Notion só cria databases por `POST /databases`, não
+  por `PATCH /blocks/.../children`; a implementação anterior prometia essa
+  capacidade com a flag de força e, ao ser usada, apagava o database original
+  (com linhas) e falhava ao recriá-lo, deixando-o arquivado até restauração
+  manual. `child_page` continua suportado com a flag (recriação real funciona,
+  só o ID muda). Validação: novo teste
+  `test_reordenar_bloco_rejeita_child_database_mesmo_com_forcar`; 252 testes
+  do notion-starter e 141 do notion-tasks-cli verdes, ruff limpo.
+
 ---
 
 Ideias abertas à contribuição: cobertura de mais tipos de propriedade do Notion,

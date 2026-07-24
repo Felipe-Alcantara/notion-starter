@@ -4,19 +4,25 @@ A API do Notion não tem endpoint para mover um bloco já criado — a única fo
 é ler seu conteúdo, apagar o original e recriar na posição desejada (`position:
 after_block`, ver :meth:`NotionClient.anexar_blocos`). Isso é seguro para
 blocos de **conteúdo puro** (heading, paragraph, divider, bulleted_list_item,
-…), mas é **destrutivo para `child_page`/`child_database`**: apagar e recriar
-um desses blocos gera uma página/database com **ID novo**, quebrando qualquer
-link, backlink ou referência externa salva para o ID antigo — a Notion API não
-oferece um jeito de preservar o ID nesse caso (ver ``docs/GITHUB-DATABASE.md``
-e o changelog oficial da API sobre ``move a page``, que só cobre re-parent,
-não reordenação de blocos-filhos).
+…), mas tem duas restrições sérias para páginas/databases filhos:
 
-Por isso :func:`reordenar_bloco` recusa `child_page`/`child_database` por
-padrão — só prossegue com ``forcar_tipos_arriscados=True``, e mesmo assim
-grava um backup do bloco original em disco antes de apagar, para permitir
-reconstrução manual se algo sair errado (a API não devolve o conteúdo restante
-de um `child_page` apagado; blocos de texto simples podem ser recriados com o
-backup salvo).
+- **`child_database` nunca pode ser recriado por este caminho.**
+  `PATCH /blocks/{id}/children` cria blocos de conteúdo — não sabe recriar um
+  database com schema; o único jeito de criar um database é
+  `POST /databases`, um endpoint totalmente diferente. Reordenar um
+  `child_database` por aqui **apaga o original e falha ao recriar**,
+  perdendo o database (embora de forma reversível — o Notion arquiva, não
+  destrói; ver a lixeira do workspace). Por isso :func:`reordenar_bloco`
+  **recusa `child_database` sempre**, sem flag de escape.
+- **`child_page` pode ser recriado**, mas com **ID novo** — apagar e recriar
+  gera uma página nova, quebrando qualquer link, backlink ou referência
+  externa salva para o ID antigo (a Notion API não oferece um jeito de
+  preservar o ID nesse caso; o endpoint de "mover página" só cobre re-parent,
+  não reordenação de blocos-filhos). Por isso exige
+  ``forcar_tipos_arriscados=True`` explicitamente.
+
+Mesmo nos casos permitidos, sempre grava um backup do bloco original em disco
+antes de apagar, para permitir reconstrução manual se algo sair errado.
 """
 
 from __future__ import annotations
@@ -47,9 +53,14 @@ _TIPOS_SEGUROS = frozenset(
     }
 )
 
-#: Tipos cujo ID importa (páginas/databases filhos) — reordenar exige apagar e
-#: recriar, o que gera um ID novo e quebra referências externas.
-_TIPOS_ARRISCADOS = frozenset({"child_page", "child_database"})
+#: `child_page` pode ser recriado (com ID novo — quebra referências externas),
+#: mas exige confirmação explícita via forcar_tipos_arriscados.
+_TIPOS_ARRISCADOS = frozenset({"child_page"})
+
+#: `child_database` nunca pode ser recriado por anexar_blocos — o único jeito
+#: de criar um database é o endpoint POST /databases, não PATCH .../children.
+#: Recusado sempre, mesmo com forcar_tipos_arriscados=True.
+_TIPOS_IMPOSSIVEIS = frozenset({"child_database"})
 
 
 def _cliente_padrao() -> NotionClient:
@@ -72,7 +83,11 @@ class ResultadoReordenacao:
 
 
 class BlocoArriscadoError(ValueError):
-    """Levantado ao tentar reordenar `child_page`/`child_database` sem confirmar o risco."""
+    """Levantado ao tentar reordenar `child_page` sem confirmar o risco de ID novo."""
+
+
+class BlocoImpossivelError(ValueError):
+    """Levantado ao tentar reordenar `child_database` — nunca suportado, nem forçado."""
 
 
 def _bloco_por_id(cliente: NotionClient, pagina_id: str, bloco_id: str) -> dict[str, Any]:
@@ -114,10 +129,11 @@ def reordenar_bloco(
             com ``inicio``.
         inicio: Quando verdadeiro, move o bloco para o início da lista de
             filhos. Exclusivo com ``apos_bloco_id``.
-        forcar_tipos_arriscados: **Necessário** para mover um `child_page` ou
-            `child_database` — apagar e recriar gera um **ID novo**, quebrando
-            links/backlinks/referências salvas para o ID antigo. Sem esta
-            flag, esses tipos levantam :class:`BlocoArriscadoError`.
+        forcar_tipos_arriscados: **Necessário** para mover um `child_page` —
+            apagar e recriar gera um **ID novo**, quebrando links/backlinks/
+            referências salvas para o ID antigo. Sem esta flag, `child_page`
+            levanta :class:`BlocoArriscadoError`. Não afeta `child_database`,
+            que é recusado sempre — ver :class:`BlocoImpossivelError`.
         diretorio_backup: Pasta onde o backup do bloco é salvo antes de apagar.
         cliente: Cliente Notion opcional (injeção para testes).
 
@@ -128,8 +144,12 @@ def reordenar_bloco(
     Raises:
         ValueError: Se nem ``apos_bloco_id`` nem ``inicio`` forem informados
             (ou ambos ao mesmo tempo), ou se o bloco não for encontrado.
-        BlocoArriscadoError: Ao mover `child_page`/`child_database` sem
+        BlocoArriscadoError: Ao mover `child_page` sem
             ``forcar_tipos_arriscados=True``.
+        BlocoImpossivelError: Ao tentar mover um `child_database` — a API do
+            Notion não permite recriar um database por este caminho, em
+            nenhuma circunstância. Recrie manualmente com
+            ``criar_database``/``importar_planilha``.
     """
 
     if bool(apos_bloco_id) == bool(inicio):
@@ -139,9 +159,17 @@ def reordenar_bloco(
     bloco = _bloco_por_id(cli, pagina_id, bloco_id)
     tipo = str(bloco.get("type") or "")
 
+    if tipo in _TIPOS_IMPOSSIVEIS:
+        raise BlocoImpossivelError(
+            f"'{tipo}' não pode ser reordenado: a API do Notion não recria um database "
+            "com PATCH .../children (só POST /databases). Apagar o original perderia o "
+            "schema e as linhas. Recrie manualmente na posição certa com criar-database "
+            "+ importar-planilha."
+        )
+
     if tipo in _TIPOS_ARRISCADOS and not forcar_tipos_arriscados:
         raise BlocoArriscadoError(
-            f"'{tipo}' é uma página/database filho — apagar e recriar para reordenar "
+            f"'{tipo}' é uma página filha — apagar e recriar para reordenar "
             "gera um ID novo e quebra links/backlinks para o ID atual. Recrie manualmente "
             "ou repita com forcar_tipos_arriscados=True se aceita esse risco."
         )

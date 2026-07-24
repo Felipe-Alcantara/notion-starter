@@ -42,6 +42,10 @@ def _child_page(id_):
     return {"id": id_, "type": "child_page", "child_page": {"title": "Estado atual"}}
 
 
+def _child_database(id_):
+    return {"id": id_, "type": "child_database", "child_database": {"title": "Docs"}}
+
+
 def test_reordenar_bloco_apos_outro(tmp_path):
     cliente = ClienteFake([_paragrafo("p1"), _paragrafo("p2")])
 
@@ -106,6 +110,17 @@ def test_reordenar_bloco_permite_child_page_com_forcar(tmp_path):
 
     assert cliente.excluidos == ["cp1"]
     assert resultado.tipo == "child_page"
+
+
+def test_reordenar_bloco_rejeita_child_database_mesmo_com_forcar():
+    cliente = ClienteFake([_child_database("db1")])
+
+    with pytest.raises(svc.BlocoImpossivelError):
+        svc.reordenar_bloco(
+            "pagina", "db1", inicio=True, forcar_tipos_arriscados=True, cliente=cliente
+        )
+
+    assert cliente.excluidos == []  # nada foi apagado — nem tenta
 
 
 def test_reordenar_bloco_exige_exatamente_um_alvo():
