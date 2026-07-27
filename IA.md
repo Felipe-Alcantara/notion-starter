@@ -196,6 +196,22 @@ pelo `notion-tasks-cli` e pelo `notion-workspace-app`.
   falhando antes da implementação existir, só então o módulo foi criado.
   Validação: 4 novos testes em `test_services_schema.py`; 256 testes do
   notion-starter seguem verdes, ruff limpo.
+- [2026-07-27] ✅ Relatórios diários a partir do git: `git_historico.py` (módulo
+  puro — executa `git` e agrupa commits por dia, sem conhecer Notion nem rede) e
+  `services/relatorios_diarios.py` (upsert **por data**: se o dia já tem página,
+  o corpo é anexado em vez de duplicar a linha). A separação existe porque o
+  histórico serve a outros destinos além do Notion, e o upsert serve a conteúdo
+  de qualquer origem, não só git. Decisão: página existente **preserva** suas
+  propriedades por padrão (`atualizar_propriedades_existentes=False`) — um mesmo
+  dia costuma acumular trabalho de projetos diferentes, e sobrescrever o resumo
+  apagaria o registro do outro projeto. Nasceu de um script pontual que publicou
+  9 dias de trabalho de um repositório na database de relatórios. TDD: testes
+  antes da implementação, e um deles pegou um defeito real — mensagem de commit
+  contendo o byte separador fazia o registro ser descartado silenciosamente
+  (corrigido limitando as divisões do `split`). Exemplo executável em
+  `examples/relatorios_do_git.py`, com `--simular`. Validação: 30 testes novos,
+  286 do notion-starter verdes, ruff limpo, e execução real contra um
+  repositório de 9 dias.
 
 ---
 

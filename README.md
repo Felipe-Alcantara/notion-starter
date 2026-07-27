@@ -115,8 +115,10 @@ client = NotionClient()  # lê NOTION_TOKEN do ambiente
 ```
 
 A pasta [`examples/`](examples/) contém scripts completos para listar páginas,
-exportar linhas, sincronizar CSV, gerar a árvore HTML do workspace e gerenciar
-tarefas.
+exportar linhas, sincronizar CSV, gerar a árvore HTML do workspace, gerenciar
+tarefas e publicar relatórios diários a partir do histórico de um repositório
+git ([`relatorios_do_git.py`](examples/relatorios_do_git.py), com `--simular`
+para conferir antes de escrever).
 
 ---
 

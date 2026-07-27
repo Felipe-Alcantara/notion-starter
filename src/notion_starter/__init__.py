@@ -14,7 +14,7 @@ API pública:
 
 from __future__ import annotations
 
-from . import properties, readers
+from . import git_historico, properties, readers
 from .client import NotionClient
 from .content import blocos_para_markdown, markdown_para_blocos
 from .exceptions import (
@@ -53,6 +53,7 @@ __version__ = "0.1.3"
 
 __all__ = [
     "NotionClient",
+    "git_historico",
     "properties",
     "readers",
     "extrair_valores",
