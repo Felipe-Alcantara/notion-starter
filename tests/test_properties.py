@@ -99,3 +99,29 @@ def test_schema_propriedade_devolve_copia_independente():
     a = p.schema_propriedade("select")
     a["select"]["options"] = [1]
     assert p.schema_propriedade("select") == {"select": {}}
+
+
+def test_schema_propriedade_relacao_monta_dual_property():
+    from notion_starter import properties as p
+
+    assert p.schema_propriedade("relacao", relacionar_com=" db-alvo ") == {
+        "relation": {"database_id": "db-alvo", "type": "dual_property", "dual_property": {}}
+    }
+
+
+def test_schema_propriedade_relacao_sem_alvo_levanta():
+    import pytest
+
+    from notion_starter import properties as p
+
+    with pytest.raises(ValueError, match="relacionar_com"):
+        p.schema_propriedade("relacao")
+
+
+def test_schema_propriedade_alvo_em_tipo_nao_relacional_levanta():
+    import pytest
+
+    from notion_starter import properties as p
+
+    with pytest.raises(ValueError, match="só se aplica ao tipo 'relacao'"):
+        p.schema_propriedade("select", relacionar_com="db-alvo")

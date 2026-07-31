@@ -160,8 +160,11 @@ TIPOS_SCHEMA: dict[str, dict[str, Any]] = {
     "arquivos": {"files": {}},
 }
 
+#: Tipo de schema que exige um database alvo em :func:`schema_propriedade`.
+TIPO_RELACAO = "relacao"
 
-def schema_propriedade(tipo: str) -> dict[str, Any]:
+
+def schema_propriedade(tipo: str, *, relacionar_com: str | None = None) -> dict[str, Any]:
     """Monta o fragmento de **schema** de uma propriedade a partir de um tipo.
 
     Diferente das demais funções deste módulo (que montam *valores* de
@@ -169,18 +172,41 @@ def schema_propriedade(tipo: str) -> dict[str, Any]:
     :meth:`notion_starter.NotionClient.criar_database` — a partir de nomes de
     tipo em português (``titulo``, ``texto``, ``numero``, ``data``…).
 
+    O tipo ``relacao`` é o único que precisa de um alvo: ``relacionar_com``
+    recebe o ID do database ao qual a coluna aponta. A relação é criada como
+    ``dual_property`` (bidirecional), então o Notion também cria a coluna
+    espelho no database alvo.
+
     Args:
-        tipo: Um dos tipos em :data:`TIPOS_SCHEMA`.
+        tipo: Um dos tipos em :data:`TIPOS_SCHEMA` ou :data:`TIPO_RELACAO`.
+        relacionar_com: ID do database alvo. Obrigatório para ``relacao`` e
+            recusado para os demais tipos.
 
     Raises:
-        ValueError: Se o tipo não for reconhecido.
+        ValueError: Se o tipo não for reconhecido ou se ``relacionar_com`` for
+            usado de forma incompatível com o tipo.
     """
 
-    fragmento = TIPOS_SCHEMA.get(tipo.strip().lower())
+    tipo_normalizado = tipo.strip().lower()
+    alvo = (relacionar_com or "").strip()
+
+    if tipo_normalizado == TIPO_RELACAO:
+        if not alvo:
+            raise ValueError(
+                "O tipo 'relacao' exige 'relacionar_com' com o ID do database alvo."
+            )
+        return {"relation": {"database_id": alvo, "type": "dual_property", "dual_property": {}}}
+
+    if alvo:
+        raise ValueError(
+            f"'relacionar_com' só se aplica ao tipo 'relacao', não a '{tipo_normalizado}'."
+        )
+
+    fragmento = TIPOS_SCHEMA.get(tipo_normalizado)
     if fragmento is None:
         raise ValueError(
             f"Tipo de propriedade '{tipo}' inválido. "
-            f"Tipos aceitos: {', '.join(sorted(TIPOS_SCHEMA))}."
+            f"Tipos aceitos: {', '.join(sorted([*TIPOS_SCHEMA, TIPO_RELACAO]))}."
         )
     return {chave: dict(valor) for chave, valor in fragmento.items()}
 
