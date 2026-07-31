@@ -1043,6 +1043,41 @@ class NotionClient:
             version=NOTION_DATA_SOURCE_VERSION,
         )
 
+    def renomear_database(self, database_id: str, novo_titulo: str) -> dict[str, Any]:
+        """Troca o título de um database, sem tocar no schema nem nas linhas.
+
+        :meth:`atualizar_database` também aceita ``titulo``, mas usa a versão
+        padrão da API; no modelo novo do Notion o ``PATCH /databases`` só aceita
+        a troca de título na versão 2025-09-03 — a mesma dos *data sources*.
+        Este método fixa essa versão, sem alterar a das demais chamadas.
+
+        Args:
+            database_id: ID do database a renomear.
+            novo_titulo: Novo título.
+
+        Returns:
+            A resposta JSON do database atualizado.
+
+        Raises:
+            NotionConfigurationError: Se ``database_id`` for inválido.
+            ValueError: Se ``novo_titulo`` for vazio.
+        """
+
+        limpo = _validar_identificador(database_id, "database_id")
+        titulo = (novo_titulo or "").strip()
+        if not titulo:
+            raise ValueError("novo_titulo é obrigatório.")
+
+        resultado = self._request_json(
+            method="PATCH",
+            path=f"/databases/{limpo}",
+            payload={"title": [{"type": "text", "text": {"content": titulo}}]},
+            idempotente=True,
+            version=NOTION_DATA_SOURCE_VERSION,
+        )
+        self.invalidar_cache(limpo)
+        return resultado
+
     def enviar_arquivo(
         self,
         conteudo: bytes,

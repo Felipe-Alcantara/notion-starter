@@ -342,6 +342,24 @@ def test_mover_database_usa_versao_data_source():
 
 
 @responses.activate
+def test_renomear_database_usa_versao_data_source():
+    responses.add(
+        responses.PATCH, f"{NOTION_BASE_URL}/databases/db1", json={"id": "db1"}, status=200
+    )
+    client = criar_client()
+    client.renomear_database("db1", "  banco de ideias  ")
+    headers = responses.calls[0].request.headers
+    assert headers["Notion-Version"] == "2025-09-03"
+    assert b"banco de ideias" in responses.calls[0].request.body
+
+
+def test_renomear_database_titulo_vazio_levanta():
+    client = criar_client()
+    with pytest.raises(ValueError, match="novo_titulo"):
+        client.renomear_database("db1", "   ")
+
+
+@responses.activate
 def test_enviar_arquivo_faz_dois_passos_e_retorna_id():
     responses.add(
         responses.POST,
