@@ -213,6 +213,18 @@ pelo `notion-tasks-cli` e pelo `notion-workspace-app`.
   286 do notion-starter verdes, ruff limpo, e execução real contra um
   repositório de 9 dias.
 
+- [2026-08-13] ✅ `DiaDeTrabalho` ganhou `duracao_minutos` e
+  `duracao_por_extenso()` (ex.: `"5h30"`, `"35 min"`, vazio com um único
+  commit), e `resumo_markdown()` passou a incluir a duração entre o primeiro
+  e o último commit do dia na linha de resumo, além da hora que já existia
+  (`"2 commits, das 09:00 às 14:30 (duração: 5h30)."`). Motivo: alguns
+  agentes já registravam hora e duração manualmente ao publicar relatórios
+  no Notion (ex.: "Commit automático do Fetch All das 08:36") — o padrão foi
+  formalizado em `docs/PADRAO-RELATORIOS.md` no hub, e este módulo passou a
+  gerar esse dado automaticamente em vez de depender de alguém lembrar.
+  Validação: 5 novos testes em `test_git_historico.py`; 295 testes do
+  notion-starter verdes, ruff limpo.
+
 ---
 
 Ideias abertas à contribuição: cobertura de mais tipos de propriedade do Notion,
