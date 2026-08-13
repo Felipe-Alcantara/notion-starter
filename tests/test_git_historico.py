@@ -93,6 +93,27 @@ class TestAgruparPorDia:
     def test_lista_autores_sem_repeticao(self, repositorio):
         assert gh.dias_de_trabalho(repositorio)[0].autores == ("Dev de Teste",)
 
+    def test_duracao_em_minutos_entre_primeiro_e_ultimo_commit(self, repositorio):
+        dia = gh.dias_de_trabalho(repositorio)[0]
+        assert dia.duracao_minutos == 330  # 09:00 -> 14:30
+        assert dia.duracao_por_extenso() == "5h30"
+
+    def test_duracao_abaixo_de_uma_hora_usa_minutos(self):
+        dia = gh.DiaDeTrabalho(
+            data="2026-07-24",
+            commits=(
+                gh.Commit("a", "2026-07-24", "09:00", "Dev", "feat: a"),
+                gh.Commit("b", "2026-07-24", "09:35", "Dev", "fix: b"),
+            ),
+        )
+        assert dia.duracao_minutos == 35
+        assert dia.duracao_por_extenso() == "35 min"
+
+    def test_duracao_com_um_unico_commit_e_zero_e_texto_vazio(self, repositorio):
+        dia = gh.dias_de_trabalho(repositorio)[1]
+        assert dia.duracao_minutos == 0
+        assert dia.duracao_por_extenso() == ""
+
     def test_sem_commits_devolve_lista_vazia(self):
         assert gh.agrupar_por_dia([]) == []
 
@@ -105,7 +126,7 @@ class TestResumoMarkdown:
     def test_lista_os_commits_com_hora_e_hash(self, repositorio):
         markdown = gh.resumo_markdown(gh.dias_de_trabalho(repositorio)[0])
         assert "## Commits de 20/07/2026" in markdown
-        assert "2 commits, das 09:00 às 14:30." in markdown
+        assert "2 commits, das 09:00 às 14:30 (duração: 5h30)." in markdown
         assert "09:00 feat: primeiro" in markdown
 
     def test_aceita_titulo_personalizado(self, repositorio):
@@ -115,3 +136,7 @@ class TestResumoMarkdown:
     def test_dia_com_um_commit_usa_singular(self, repositorio):
         markdown = gh.resumo_markdown(gh.dias_de_trabalho(repositorio)[1])
         assert "1 commit," in markdown
+
+    def test_dia_com_um_commit_nao_mostra_duracao(self, repositorio):
+        markdown = gh.resumo_markdown(gh.dias_de_trabalho(repositorio)[1])
+        assert "duração" not in markdown

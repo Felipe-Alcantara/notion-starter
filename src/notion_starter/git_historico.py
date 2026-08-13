@@ -65,6 +65,23 @@ class DiaDeTrabalho:
         return self.commits[-1].hora if self.commits else ""
 
     @property
+    def duracao_minutos(self) -> int:
+        """Minutos entre o primeiro e o último commit do dia (0 se houver só um)."""
+        if len(self.commits) < 2:
+            return 0
+        inicio_h, inicio_m = (int(parte) for parte in self.primeira_hora.split(":"))
+        fim_h, fim_m = (int(parte) for parte in self.ultima_hora.split(":"))
+        return (fim_h * 60 + fim_m) - (inicio_h * 60 + inicio_m)
+
+    def duracao_por_extenso(self) -> str:
+        """``95`` minutos vira ``"1h35"``; menos de uma hora vira ``"35 min"``."""
+        minutos = self.duracao_minutos
+        if minutos <= 0:
+            return ""
+        horas, resto = divmod(minutos, 60)
+        return f"{horas}h{resto:02d}" if horas else f"{resto} min"
+
+    @property
     def autores(self) -> tuple[str, ...]:
         vistos = dict.fromkeys(commit.autor for commit in self.commits)
         return tuple(vistos)
@@ -177,7 +194,10 @@ def resumo_markdown(dia: DiaDeTrabalho, *, titulo: str = "") -> str:
     linhas = [f"## {cabecalho}", ""]
     plural = "commit" if dia.total == 1 else "commits"
     if dia.total:
-        linhas.append(f"{dia.total} {plural}, das {dia.primeira_hora} às {dia.ultima_hora}.")
+        linha = f"{dia.total} {plural}, das {dia.primeira_hora} às {dia.ultima_hora}"
+        duracao = dia.duracao_por_extenso()
+        linha += f" (duração: {duracao})." if duracao else "."
+        linhas.append(linha)
         linhas.append("")
     for commit in dia.commits:
         linhas.append(f"- `{commit.hash_curto}` {commit.descricao}")
