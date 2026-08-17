@@ -299,3 +299,48 @@ A checagem vive no serviço, não na borda, para valer também para MCP e script
 `1fc91f95…` foi recusado listando as três databases de dentro; uma database de
 teste criada dentro de uma linha sobreviveu a `escrever --substituir`; as quatro
 linhas de teste foram arquivadas ao fim. 329 testes verdes, `ruff` limpo.
+
+---
+
+## [2026-08-17] Histórico de vários repositórios, e a varredura que acha o dia esquecido
+
+**Contexto.** `git_historico` já reconstruía o dia de trabalho de **um**
+repositório. Mas um dia real quase nunca cabe num só — mexe-se na biblioteca, no
+CLI que a consome e no app que a expõe — e o relatório precisa contar isso junto,
+senão o mesmo dia vira três narrativas soltas que ninguém cruza depois.
+
+`services/historico_repositorios.py` agrega os históricos e agrupa por data,
+produzindo o texto no formato que os relatórios diários já usam: **hora e duração
+por projeto**, nunca só a data. Acrescenta arquivos e linhas por commit, que
+respondem a "foi ajuste ou reescrita?".
+
+### `descobrir_repositorios` — o motivo de existir
+
+O pedido original era registrar o histórico dos projetos citados numa conversa.
+A pergunta por trás dele era outra: *existe algum dia de trabalho que ficou sem
+registro?* Listar repositórios à mão só encontra o que já se lembra — e o
+esquecido, por definição, não está nessa lista.
+
+Medido na máquina de origem: a lista de memória tinha **15 repositórios**; a
+varredura encontrou **47**, e o histórico saltou de 125 para **201 dias** com
+commit, de 2024-03-26 a 2026-08-17.
+
+### O corpo diz que é reconstruído
+
+O texto gerado abre avisando que veio do git e que decisões e pendências sem
+commit não aparecem ali. Inventar narrativa a partir de mensagem de commit é o
+jeito mais fácil de povoar um relatório com ficção plausível; o aviso é o que
+impede o leitor de tomar log por relato.
+
+### Decisões de robustez
+
+- Repositório inacessível é **pulado**, não fatal: numa lista de quinze, um
+  caminho que mudou não pode custar o histórico dos outros catorze.
+- `--shortstat` tem formato irregular (omite a metade que é zero, e merge não
+  gera linha). O parser vive numa função pura, testada com os três formatos.
+- `relatorios_diarios` voltou a converter o retorno de `escrever_conteudo` para
+  inteiro com `int(...)` em vez de ler `.anexados` — converter mantém válido
+  qualquer double de teste que devolva só o número.
+
+**Validação:** 354 testes verdes, `ruff` limpo; publicação real de 201 dias no
+workspace do usuário (115 páginas criadas, 86 complementadas).
