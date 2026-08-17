@@ -159,7 +159,11 @@ def publicar_relatorios(
 
         blocos = 0
         if relatorio.corpo_markdown.strip():
-            blocos = escrever_conteudo(page_id, relatorio.corpo_markdown, cliente=client)
+            # `int(...)`: escrever_conteudo passou a devolver um resultado rico
+            # (o que anexou e o que a substituição preservou), que converte para
+            # a contagem antiga. Converter em vez de ler o campo mantém válido
+            # qualquer double que devolva só o número.
+            blocos = int(escrever_conteudo(page_id, relatorio.corpo_markdown, cliente=client))
 
         resultados.append(
             ResultadoRelatorio(
