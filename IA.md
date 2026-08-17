@@ -229,3 +229,73 @@ pelo `notion-tasks-cli` e pelo `notion-workspace-app`.
 
 Ideias abertas à contribuição: cobertura de mais tipos de propriedade do Notion,
 mais tipos de bloco no conversor Markdown, escrita de linhas em data sources.
+
+---
+
+## [2026-08-17] Operar Notion às cegas era o gargalo real — três defesas na biblioteca
+
+**Contexto.** Uma sessão longa de trabalho real no workspace (criar 17 tarefas
+ricas, reescrever 16 e montar 48 ligações entre elas) expôs o mesmo padrão em
+todas as fricções: **a biblioteca não respondia perguntas que antecedem a
+escrita**, e o custo aparecia depois, já gravado no Notion.
+
+### 1. `descrever_database` — ler o schema sem chamar a API na mão
+
+`schema.py` só sabia **comparar** um database com um schema esperado. Para
+descobrir o nome exato de uma coluna, os valores aceitos por um select ou como
+uma relação está configurada, era preciso chamar `/v1/databases/<id>` cru e ler
+JSON — passo que se pula com pressa.
+
+Entram `DescricaoDatabase`, `Coluna` e `Relacao` (funções puras, sem rede):
+colunas ordenadas com o título primeiro, opções de select/status/multi_select,
+`editavel` marcando os tipos que o Notion calcula e recusa em PATCH
+(`TIPOS_SOMENTE_LEITURA`), e a configuração de cada relação com `auto_referente`
+comparando IDs sem hífen.
+
+### 2. `services/relacoes.py` — o tipo da relação não prevê o comportamento
+
+Hipótese inicial: `single_property` = mão única, então uma ligação simétrica
+exige gravar as duas pontas. **Medido no workspace real e a hipótese caiu
+parcialmente.** Experimento: duas linhas novas no database `30296e2d…`, coluna
+`Subtarefas relacionadas`, reportada como `single_property` pelas versões de API
+`2022-06-28` **e** `2025-09-03`. PATCH só na ponta C→D; releitura de D **já
+trazia C**. O Notion espelhou sem segunda escrita.
+
+Conclusão registrada: **não dá para deduzir do tipo declarado se o espelho
+acontece.** Assumir "espelha" deixa metade da malha faltando; assumir "não
+espelha" gasta requisição e pode duplicar. `relacionar()` resolve conferindo —
+escreve uma ponta, **relê a outra** e grava só o que faltar. Sai simétrico nos
+dois mundos, é idempotente e o retorno diz quais páginas precisaram de escrita.
+Relação para outro database e de mão única não tem coluna de volta: escreve só A.
+
+### 3. Reescrita que não custa o que não sabe repor
+
+`limpar_conteudo` apagava **todos** os blocos de topo, e `escrever(substituir=True)`
+chamava isso em silêncio. Consequência real: reescrever o texto de uma página
+apagava a imagem dela (URL do Notion é assinada e expira — a lixeira não devolve
+o arquivo) e, pior, apagava `child_database`, **levando o database inteiro** com
+ID novo ao restaurar e todo link salvo quebrado.
+
+Agora `TIPOS_NAO_RECRIAVEIS` (imagem, arquivo, vídeo, PDF, áudio, embed,
+bookmark, link_preview, `child_page`, `child_database`, synced_block, table,
+column_list) é **preservado por padrão**; apagar exige `incluir_nao_recriaveis=True`.
+Os retornos viraram `ResultadoLimpeza`/`ResultadoEscrita`, que implementam
+`__int__`/`__eq__` contra `int` — quem usava só a contagem antiga não quebrou.
+
+### 4. `EscritaAbaixoDeDatabaseError` — a regra que virou guarda
+
+A "regra do link" (se o alvo é database, trabalhe nas linhas) existia só em
+documentação, e modelos mais fracos a ignoravam: recebiam o link de uma página
+que **contém** uma database e escreviam um parágrafo solto abaixo da tabela,
+onde não vira linha nem aparece em view nenhuma.
+
+`escrever_conteudo` agora chama `databases_da_pagina()` antes de qualquer escrita
+e **recusa** com uma exceção que lista as databases encontradas com ID e traz os
+comandos prontos (`linhas` → `conteudo` → `editar-linha`/`escrever <linha_id>`).
+A checagem vive no serviço, não na borda, para valer também para MCP e scripts.
+`mesmo_com_database=True` libera quando o bloco solto é mesmo a intenção.
+
+**Validação real** (2026-08-17, workspace do usuário): `escrever` na página HOME
+`1fc91f95…` foi recusado listando as três databases de dentro; uma database de
+teste criada dentro de uma linha sobreviveu a `escrever --substituir`; as quatro
+linhas de teste foram arquivadas ao fim. 329 testes verdes, `ruff` limpo.

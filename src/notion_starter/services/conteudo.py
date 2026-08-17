@@ -16,6 +16,7 @@ tem acesso total. Quem expõe (CLI/MCP) é responsável por confirmar antes.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
 from notion_starter import (
@@ -23,6 +24,7 @@ from notion_starter import (
     blocos_para_markdown,
     markdown_para_blocos,
 )
+from notion_starter.exceptions import EscritaAbaixoDeDatabaseError
 
 # Tamanho do trecho de texto mostrado ao listar blocos. O bastante para
 # reconhecer o bloco (e casar com o que se lê na página) sem poluir a saída.
@@ -32,6 +34,109 @@ _LARGURA_PREVIEW = 100
 # de 2000 caracteres por item de rich_text já é tratado na lib (fatiamento em
 # ``content.py``); aqui cuidamos do limite de blocos por requisição.
 _MAX_BLOCOS_POR_REQUISICAO = 100
+
+#: Blocos que a lib **não sabe recriar** a partir de Markdown. Apagar um deles
+#: numa reescrita é perda de verdade, não inconveniência:
+#:
+#: - ``image``/``file``/``video``/``pdf``/``audio``: a URL do Notion é assinada e
+#:   expira; depois de arquivado o bloco, o arquivo não volta por Markdown.
+#: - ``child_page``/``child_database``: apagar leva junto a subpágina ou o
+#:   **database inteiro** que morava dentro daquela página.
+#: - ``embed``/``bookmark``/``link_preview``/``synced_block``/``table``/
+#:   ``column_list``: sobrevivem ao arquivamento, mas ``blocos_para_markdown``
+#:   não os reconstrói — reescrever apagaria sem repor.
+#:
+#: Por isso a reescrita os **preserva por padrão**; apagá-los exige um pedido
+#: explícito de quem chama.
+TIPOS_NAO_RECRIAVEIS = frozenset(
+    {
+        "image",
+        "file",
+        "video",
+        "pdf",
+        "audio",
+        "embed",
+        "bookmark",
+        "link_preview",
+        "child_page",
+        "child_database",
+        "synced_block",
+        "table",
+        "column_list",
+    }
+)
+
+
+@dataclass
+class ResultadoLimpeza:
+    """O que uma limpeza de corpo apagou e o que decidiu não apagar.
+
+    Attributes:
+        apagados: Quantidade de blocos arquivados.
+        preservados: ``(id, tipo)`` de cada bloco mantido por não ser recriável
+            a partir de Markdown.
+    """
+
+    apagados: int = 0
+    preservados: list[tuple[str, str]] = field(default_factory=list)
+
+    def __int__(self) -> int:
+        """Compatibilidade: o retorno antigo era só a contagem de apagados."""
+
+        return self.apagados
+
+    def __eq__(self, outro: object) -> bool:
+        """Compara com outro resultado ou direto com a contagem de apagados."""
+
+        if isinstance(outro, ResultadoLimpeza):
+            return (self.apagados, self.preservados) == (outro.apagados, outro.preservados)
+        if isinstance(outro, int):
+            return self.apagados == outro
+        return NotImplemented
+
+    @property
+    def tipos_preservados(self) -> list[str]:
+        """Tipos distintos preservados, em ordem, para mensagem ao usuário."""
+
+        vistos: list[str] = []
+        for _, tipo in self.preservados:
+            if tipo not in vistos:
+                vistos.append(tipo)
+        return vistos
+
+
+@dataclass
+class ResultadoEscrita:
+    """O que uma escrita anexou e, quando substituiu, o que a limpeza fez.
+
+    Attributes:
+        anexados: Blocos escritos na página.
+        limpeza: Resultado da limpeza quando ``substituir=True``; ``None`` numa
+            escrita que só anexou.
+    """
+
+    anexados: int = 0
+    limpeza: ResultadoLimpeza | None = None
+
+    def __int__(self) -> int:
+        """Compatibilidade: o retorno antigo era só a contagem de anexados."""
+
+        return self.anexados
+
+    def __eq__(self, outro: object) -> bool:
+        """Compara com outro resultado ou direto com a contagem de anexados."""
+
+        if isinstance(outro, ResultadoEscrita):
+            return (self.anexados, self.limpeza) == (outro.anexados, outro.limpeza)
+        if isinstance(outro, int):
+            return self.anexados == outro
+        return NotImplemented
+
+    @property
+    def preservados(self) -> list[tuple[str, str]]:
+        """Blocos que a substituição manteve por não serem recriáveis."""
+
+        return self.limpeza.preservados if self.limpeza else []
 
 
 def _cliente_padrao() -> NotionClient:
@@ -175,13 +280,46 @@ def listar_blocos(
     ]
 
 
+def databases_da_pagina(
+    page_id: str,
+    *,
+    cliente: NotionClient | None = None,
+) -> list[tuple[str, str]]:
+    """Lista as databases que moram **dentro** de uma página.
+
+    Serve para responder, antes de escrever, a pergunta que decide tudo: *o
+    conteúdo desta página é texto, ou são as linhas de uma tabela?* Um link do
+    Notion não deixa isso claro — a página que contém uma database parece um
+    documento comum até você abrir.
+
+    Args:
+        page_id: ID da página a inspecionar.
+        cliente: Cliente Notion opcional (injeção para testes/uso alternativo).
+
+    Returns:
+        ``(database_id, título)`` de cada ``child_database`` de topo, na ordem
+        em que aparecem. Lista vazia quando a página é só conteúdo.
+    """
+
+    cli = cliente or _cliente_padrao()
+    encontradas: list[tuple[str, str]] = []
+    for bloco in cli.ler_blocos(page_id, buscar_todos=True):
+        if bloco.get("type") != "child_database":
+            continue
+        filho = bloco.get("child_database") or {}
+        encontradas.append((str(bloco.get("id", "")), str(filho.get("title", ""))))
+    return encontradas
+
+
 def escrever_conteudo(
     page_id: str,
     markdown: str,
     *,
     substituir: bool = False,
+    apagar_nao_recriaveis: bool = False,
+    mesmo_com_database: bool = False,
     cliente: NotionClient | None = None,
-) -> int:
+) -> ResultadoEscrita:
     """Anexa conteúdo (em Markdown) ao **final** de uma página.
 
     Por padrão **anexa**: o conteúdo já existente é preservado e os novos blocos
@@ -189,6 +327,12 @@ def escrever_conteudo(
     escrever — a página fica exatamente com o Markdown informado (útil para
     corrigir/reescrever sem ir empilhando blocos a cada tentativa). O Markdown é
     validado **antes** de apagar, então uma entrada vazia nunca zera a página.
+
+    Ao substituir, os blocos que a lib não sabe recriar a partir de Markdown —
+    imagem, arquivo, embed, subpágina, ``child_database`` — são **preservados**
+    por padrão (ver :func:`limpar_conteudo`) e o conteúdo novo entra depois
+    deles. Sem isso, reescrever o texto de uma página custaria a imagem que
+    estava nela, ou o database inteiro que morava dentro dela.
 
     O envio é feito em lotes de até 100 blocos (limite do Notion por requisição)
     e, quando a API informa os blocos criados, confirma-se que a quantidade
@@ -198,14 +342,30 @@ def escrever_conteudo(
         page_id: ID da página (ou bloco) que receberá o conteúdo.
         markdown: Texto em Markdown a anexar.
         substituir: Quando verdadeiro, apaga o corpo atual antes de escrever.
+        apagar_nao_recriaveis: Junto com ``substituir``, apaga **também** os
+            blocos não recriáveis. Só passe ``True`` com pedido explícito.
+        mesmo_com_database: Permite escrever numa página que contém database.
+            Só passe ``True`` quando a intenção for mesmo um bloco solto na
+            página, e não uma linha da tabela.
         cliente: Cliente Notion opcional (injeção para testes/uso alternativo).
 
     Returns:
-        A quantidade de blocos anexados.
+        Um :class:`ResultadoEscrita` com a quantidade de blocos anexados e o que
+        a substituição apagou/preservou. Compara e converte para ``int`` como a
+        contagem de anexados, mantendo quem usava só o número.
 
     Raises:
         ValueError: Se ``markdown`` não gerar nenhum bloco.
+        EscritaAbaixoDeDatabaseError: Se a página contiver uma database e
+            ``mesmo_com_database`` for falso — ver a nota abaixo.
         RuntimeError: Se a API criar menos blocos do que os enviados.
+
+    Note:
+        **Página que contém database é recusada por padrão.** É o erro mais caro
+        de reverter de quem recebe um link do Notion sem abrir: o texto vai
+        parar solto embaixo da tabela, onde não vira linha, não aparece em view
+        nenhuma e ninguém encontra depois. Quando o alvo é uma database, o
+        trabalho é **nas linhas** — e a mensagem do erro traz o caminho pronto.
     """
 
     blocos = markdown_para_blocos(markdown)
@@ -213,9 +373,22 @@ def escrever_conteudo(
         raise ValueError("O conteúdo está vazio — nada a escrever.")
 
     cliente = cliente or _cliente_padrao()
+
+    # Antes de qualquer escrita: esta página é um documento ou a casa de uma
+    # tabela? Checar aqui (e não só na borda) faz a proteção valer para CLI,
+    # MCP e qualquer script que use o serviço.
+    if not mesmo_com_database:
+        dentro = databases_da_pagina(page_id, cliente=cliente)
+        if dentro:
+            raise EscritaAbaixoDeDatabaseError(page_id, dentro)
+    limpeza: ResultadoLimpeza | None = None
     if substituir:
         # Validar (acima) antes de apagar: entrada inválida nunca zera a página.
-        limpar_conteudo(page_id, cliente=cliente)
+        limpeza = limpar_conteudo(
+            page_id,
+            incluir_nao_recriaveis=apagar_nao_recriaveis,
+            cliente=cliente,
+        )
     criados = 0
     for inicio in range(0, len(blocos), _MAX_BLOCOS_POR_REQUISICAO):
         lote = blocos[inicio : inicio + _MAX_BLOCOS_POR_REQUISICAO]
@@ -229,7 +402,7 @@ def escrever_conteudo(
         raise RuntimeError(
             f"Escrita parcial: enviados {len(blocos)} blocos, mas a API criou {criados}."
         )
-    return len(blocos)
+    return ResultadoEscrita(anexados=len(blocos), limpeza=limpeza)
 
 
 def criar_subpagina(
@@ -325,31 +498,48 @@ def excluir_bloco(
 def limpar_conteudo(
     page_id: str,
     *,
+    incluir_nao_recriaveis: bool = False,
     cliente: NotionClient | None = None,
-) -> int:
-    """Apaga **todos** os blocos de topo de uma página. Destrutivo — confirme antes.
+) -> ResultadoLimpeza:
+    """Apaga os blocos de topo de uma página. Destrutivo — confirme antes.
 
     Zera o corpo da página num passo só, em vez de exigir apagar bloco a bloco
     pelo ID. É o que destrava corrigir uma página que virou bagunça: limpar e
     reescrever, sem ficar empilhando conteúdo. Como o Notion arquiva (não deleta
     de vez), os blocos ficam recuperáveis pela lixeira.
 
+    **Por padrão preserva o que não dá para recriar** (:data:`TIPOS_NAO_RECRIAVEIS`):
+    imagem, arquivo, embed, subpágina e — o caso mais grave — ``child_database``,
+    porque apagar esse bloco leva junto o database inteiro que morava na página.
+    Recuperar pela lixeira depois é possível, mas o ID muda e todo link salvo
+    para ele quebra; e a URL de um arquivo do Notion é assinada e expira, então
+    "está na lixeira" não significa "volta com o conteúdo".
+
     Args:
         page_id: ID da página (ou bloco) cujo corpo será apagado.
+        incluir_nao_recriaveis: Apaga **também** os blocos não recriáveis. Só
+            passe ``True`` a partir de um pedido explícito de quem opera.
         cliente: Cliente Notion opcional (injeção para testes/uso alternativo).
 
     Returns:
-        A quantidade de blocos apagados.
+        Um :class:`ResultadoLimpeza` com o que foi apagado e o que foi mantido.
+        Ele compara e converte para ``int`` como a contagem de apagados, então
+        quem só usava o número continua funcionando.
     """
 
     cli = cliente or _cliente_padrao()
-    apagados = 0
+    resultado = ResultadoLimpeza()
     for bloco in cli.ler_blocos(page_id, buscar_todos=True):
         block_id = bloco.get("id")
-        if block_id:
-            cli.excluir_bloco(block_id)
-            apagados += 1
-    return apagados
+        if not block_id:
+            continue
+        tipo = str(bloco.get("type", ""))
+        if not incluir_nao_recriaveis and tipo in TIPOS_NAO_RECRIAVEIS:
+            resultado.preservados.append((block_id, tipo))
+            continue
+        cli.excluir_bloco(block_id)
+        resultado.apagados += 1
+    return resultado
 
 
 def buscar(

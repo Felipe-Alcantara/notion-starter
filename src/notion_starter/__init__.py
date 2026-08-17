@@ -7,6 +7,8 @@ API pública:
         conteúdo (blocos) de uma página como Markdown.
     extrair_valores: reduz uma página do Notion a um mapa coluna -> valor simples.
     comparar_schema / SchemaComparison: valida um database contra um schema.
+    descrever_database / DescricaoDatabase: lê o schema real de um database —
+        colunas, tipos, opções válidas e como cada relação está configurada.
     construir_inventario / Inventario: mapeia o workspace (árvore, duplicatas, órfãos).
     configure_logging: logging opcional em console/arquivo.
     Exceções: NotionSyncError e suas subclasses.
@@ -18,6 +20,7 @@ from . import git_historico, properties, readers
 from .client import NotionClient
 from .content import blocos_para_markdown, markdown_para_blocos
 from .exceptions import (
+    EscritaAbaixoDeDatabaseError,
     NotionAPIError,
     NotionConfigurationError,
     NotionConnectionError,
@@ -42,9 +45,13 @@ from .inventory import (
 from .logging import configure_logging, get_logger
 from .readers import extrair_valores, ler_propriedade
 from .schema import (
+    Coluna,
+    DescricaoDatabase,
+    Relacao,
     Schema,
     SchemaComparison,
     comparar_schema,
+    descrever_database,
     extrair_tipos_propriedades,
 )
 from .tasks import CamposTarefa, Tarefa, TaskList, tarefa_de_pagina
@@ -62,7 +69,12 @@ __all__ = [
     "blocos_para_markdown",
     "Schema",
     "SchemaComparison",
+    "EscritaAbaixoDeDatabaseError",
     "comparar_schema",
+    "descrever_database",
+    "DescricaoDatabase",
+    "Coluna",
+    "Relacao",
     "extrair_tipos_propriedades",
     "Inventario",
     "ItemInventario",
