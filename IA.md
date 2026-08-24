@@ -344,3 +344,48 @@ impede o leitor de tomar log por relato.
 
 **Validação:** 354 testes verdes, `ruff` limpo; publicação real de 201 dias no
 workspace do usuário (115 páginas criadas, 86 complementadas).
+
+---
+
+## [2026-08-24] `status` e `select` não são a mesma coluna — o schema real passa a mandar
+
+**Contexto.** A "To do list!" do usuário nomeia as colunas exatamente como a
+`CamposTarefa` espera (`Tarefa`, `Etapa`, `Esforço`), e mesmo assim **toda
+escrita falhava**. Ler funcionava. O motivo é sutil: na leitura `status` e
+`select` são indistinguíveis (os dois devolvem `{"name": ...}`), mas na escrita
+e no filtro o Notion trata os dois como tipos diferentes e recusa com 400.
+
+`TaskList` assumia `status` em `Etapa` e `Esforço`, sempre. Num database onde
+essas colunas são `select`, isso produzia:
+
+- `criar` → HTTP 400, que a CLI traduzia para "Falha ao falar com o Notion.";
+- `listar --status` → o mesmo 400, no filtro;
+- e nenhum dos dois dizia **qual** coluna estava errada.
+
+Medido no workspace real em 2026-08-24: `listar` sem filtro devolvia as 56
+linhas; `listar --status "Entrada"` estourava.
+
+### A correção: perguntar ao schema, não ao padrão
+
+`TaskList` ganhou `tipo_da_coluna` (público) e `_tipo_exigido` /
+`_valor_selecao` / `_filtro_selecao` (internos). `criar`, `editar` e `listar`
+agora montam o payload **no tipo que a coluna tem de fato**. O `NotionClient` já
+guarda o schema em cache com TTL, então a consulta não custa uma requisição por
+campo — e nenhuma requisição a mais quando nenhum campo tipado é usado.
+
+Coluna ausente ou de tipo incompatível vira `NotionSchemaError` **antes** de
+chamar a API, nomeando a coluna, o esperado e o encontrado. Falhar cedo com o
+nome certo vale mais do que um 400 genérico depois de a requisição sair.
+
+### Por que não configurar `CamposTarefa` por perfil
+
+Era a alternativa registrada na tarefa. Ela resolve o **nome** da coluna, não o
+**tipo** — o erro medido era de tipo, com os nomes já corretos. Configuração por
+perfil também empurra para o usuário uma informação que o database já declara.
+Ler o schema resolve os dois casos sem pedir nada a ninguém; os nomes seguem
+configuráveis via `CamposTarefa` para quem precisar.
+
+**Validação:** 358 testes verdes (2 pulados) e `ruff` limpo; dos 6 testes
+novos, 5 falham no código antigo (verificado revertendo `tasks.py`). No workspace real, com o
+código do módulo: `listar --status "Entrada"` → 31 linhas e
+`listar --duracao "Poucas horas"` → 44 linhas, ambos antes impossíveis.
