@@ -129,18 +129,85 @@ def test_listar_por_status_duracao_e_area_envia_filtro_composto():
 @responses.activate
 def test_criar_envia_propriedades():
     responses.add(
+        responses.GET,
+        f"{NOTION_BASE_URL}/databases/{DB}",
+        json=SCHEMA_TAREFAS,
+        status=200,
+    )
+    responses.add(
         responses.POST,
         f"{NOTION_BASE_URL}/pages",
         json=pagina_tarefa("novo", "Nova tarefa", "Entrada"),
         status=200,
     )
     t = criar_tasklist().criar("Nova tarefa", status="Entrada", prazo="2026-07-01")
-    corpo = json.loads(responses.calls[0].request.body)
+    chamada_criacao = next(
+        chamada
+        for chamada in responses.calls
+        if chamada.request.method == "POST" and chamada.request.url.endswith("/pages")
+    )
+    corpo = json.loads(chamada_criacao.request.body)
     assert corpo["parent"]["database_id"] == DB
     assert corpo["properties"]["Tarefa"]["title"][0]["text"]["content"] == "Nova tarefa"
     assert corpo["properties"]["Etapa"]["status"]["name"] == "Entrada"
     assert corpo["properties"]["Prazo"]["date"]["start"] == "2026-07-01"
     assert t.id == "novo"
+
+
+@responses.activate
+def test_criar_descobre_titulo_e_omite_campos_de_tarefa_ausentes():
+    schema_relatorios = {
+        "id": DB,
+        "title": [{"plain_text": "Relatórios diários"}],
+        "properties": {
+            "Relatório": {"type": "title", "title": {}},
+            "Data": {"type": "date", "date": {}},
+            "Status": {
+                "type": "status",
+                "status": {"options": [{"name": "Concluído"}]},
+            },
+        },
+    }
+    pagina = {
+        "id": "relatorio-novo",
+        "url": "https://notion.so/relatorio-novo",
+        "properties": {
+            "Relatório": {
+                "type": "title",
+                "title": [{"plain_text": "Relatório — 25/08/2026"}],
+            }
+        },
+    }
+    responses.add(
+        responses.GET,
+        f"{NOTION_BASE_URL}/databases/{DB}",
+        json=schema_relatorios,
+        status=200,
+    )
+    responses.add(
+        responses.POST,
+        f"{NOTION_BASE_URL}/pages",
+        json=pagina,
+        status=200,
+    )
+
+    criado = criar_tasklist().criar(
+        "Relatório — 25/08/2026",
+        status="Entrada",
+        prazo="2026-08-25",
+        duracao="Dias",
+        areas=["area-1"],
+    )
+
+    chamada_criacao = next(
+        chamada for chamada in responses.calls if chamada.request.method == "POST"
+    )
+    corpo = json.loads(chamada_criacao.request.body)
+    assert list(corpo["properties"]) == ["Relatório"]
+    assert corpo["properties"]["Relatório"]["title"][0]["text"]["content"] == (
+        "Relatório — 25/08/2026"
+    )
+    assert criado.nome == "Relatório — 25/08/2026"
 
 
 # -- Atualizar / concluir --------------------------------------------------
@@ -196,7 +263,12 @@ def test_criar_com_duracao_e_areas():
         status=200,
     )
     t = criar_tasklist().criar("Tarefa", duracao="Dias", areas=["a1"])
-    corpo = json.loads(responses.calls[0].request.body)
+    chamada_criacao = next(
+        chamada
+        for chamada in responses.calls
+        if chamada.request.method == "POST" and chamada.request.url.endswith("/pages")
+    )
+    corpo = json.loads(chamada_criacao.request.body)
     assert corpo["properties"]["Esforço"]["status"]["name"] == "Dias"
     assert corpo["properties"]["Áreas da vida"]["relation"] == [{"id": "a1"}]
     assert t.duracao == "Dias"
@@ -270,6 +342,7 @@ def test_editar_sem_campos_levanta_erro():
 AREAS_DB = "db_areas"
 
 SCHEMA_TAREFAS = {
+    "id": DB,
     "properties": {
         "Tarefa": {"type": "title", "title": {}},
         "Etapa": {
@@ -290,6 +363,7 @@ SCHEMA_TAREFAS = {
                 ],
             },
         },
+        "Prazo": {"type": "date", "date": {}},
         "Áreas da vida": {
             "type": "relation",
             "relation": {"database_id": AREAS_DB},

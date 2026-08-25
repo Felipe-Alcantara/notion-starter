@@ -16,6 +16,7 @@ from typing import Any
 
 from . import properties as p
 from .client import NotionClient
+from .schema import descrever_database
 
 
 @dataclass
@@ -241,7 +242,13 @@ class TaskList:
         duracao: str | None = None,
         areas: list[str] | None = None,
     ) -> Tarefa:
-        """Cria uma tarefa nova no database.
+        """Cria uma linha nova, preservando os atalhos do modelo de tarefas.
+
+        A coluna de título é descoberta no schema real. Os demais campos do
+        modelo de tarefas só entram no payload quando a coluna correspondente
+        existe com um tipo compatível. Assim, o mesmo comando também cria linhas
+        em databases genéricos (relatórios, livros, finanças…) sem inventar as
+        propriedades ``Tarefa``, ``Etapa`` ou ``Esforço``.
 
         Args:
             nome: Título da tarefa.
@@ -254,18 +261,49 @@ class TaskList:
             A tarefa criada.
         """
 
-        propriedades: dict[str, Any] = {self._campos.nome: p.title(nome)}
-        if status is not None:
+        database = self._client.get_database(self._database_id)
+        descricao = descrever_database(database)
+        coluna_titulo = descricao.coluna_titulo
+        if coluna_titulo is None:
+            raise ValueError(
+                f"O database {self._database_id} não possui uma coluna de título."
+            )
+
+        schema = database.get("properties") or {}
+
+        def tipo_da_coluna(coluna: str) -> str | None:
+            info = schema.get(coluna)
+            return str(info.get("type")) if isinstance(info, dict) else None
+
+        propriedades: dict[str, Any] = {coluna_titulo.nome: p.title(nome)}
+
+        tipo_status = tipo_da_coluna(self._campos.status)
+        if status is not None and tipo_status == "status":
             propriedades[self._campos.status] = p.status(status)
-        if prazo is not None:
+        elif status is not None and tipo_status == "select":
+            propriedades[self._campos.status] = p.select(status)
+
+        if prazo is not None and tipo_da_coluna(self._campos.prazo) == "date":
             propriedades[self._campos.prazo] = p.date(prazo)
-        if duracao is not None:
+
+        tipo_duracao = tipo_da_coluna(self._campos.duracao)
+        if duracao is not None and tipo_duracao == "status":
             propriedades[self._campos.duracao] = p.status(duracao)
-        if areas is not None:
+        elif duracao is not None and tipo_duracao == "select":
+            propriedades[self._campos.duracao] = p.select(duracao)
+
+        if areas is not None and tipo_da_coluna(self._campos.areas) == "relation":
             propriedades[self._campos.areas] = p.relation(areas)
 
         pagina = self._client.criar_pagina(self._database_id, propriedades)
-        tarefa = tarefa_de_pagina(pagina, self._campos)
+        campos_reais = CamposTarefa(
+            nome=coluna_titulo.nome,
+            status=self._campos.status,
+            prazo=self._campos.prazo,
+            duracao=self._campos.duracao,
+            areas=self._campos.areas,
+        )
+        tarefa = tarefa_de_pagina(pagina, campos_reais)
         self._enriquecer_areas([tarefa])
         return tarefa
 
