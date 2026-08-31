@@ -17,6 +17,7 @@ from typing import Any
 from . import properties as p
 from .client import NotionClient
 from .exceptions import NotionSchemaError
+from .schema import descrever_database
 
 #: Tipos de coluna que guardam o **nome de uma opção**.
 #:
@@ -313,7 +314,13 @@ class TaskList:
         duracao: str | None = None,
         areas: list[str] | None = None,
     ) -> Tarefa:
-        """Cria uma tarefa nova no database.
+        """Cria uma linha nova, preservando os atalhos do modelo de tarefas.
+
+        A coluna de título é descoberta no schema real. Os demais campos do
+        modelo de tarefas só entram no payload quando a coluna correspondente
+        existe com um tipo compatível. Assim, o mesmo comando também cria linhas
+        em databases genéricos (relatórios, livros, finanças…) sem inventar as
+        propriedades ``Tarefa``, ``Etapa`` ou ``Esforço``.
 
         Args:
             nome: Título da tarefa.
@@ -326,20 +333,53 @@ class TaskList:
             A tarefa criada.
         """
 
-        propriedades: dict[str, Any] = {self._campos.nome: p.title(nome)}
+        database = self._client.get_database(self._database_id)
+        descricao = descrever_database(database)
+        coluna_titulo = descricao.coluna_titulo
+        if coluna_titulo is None:
+            raise ValueError(
+                f"O database {self._database_id} não possui uma coluna de título."
+            )
+
+        propriedades: dict[str, Any] = {coluna_titulo.nome: p.title(nome)}
+        database_generico = coluna_titulo.nome != self._campos.nome
+
         if status is not None:
-            propriedades[self._campos.status] = self._valor_selecao(self._campos.status, status)
+            if self.tipo_da_coluna(self._campos.status) is not None:
+                propriedades[self._campos.status] = self._valor_selecao(
+                    self._campos.status, status
+                )
+            elif not database_generico:
+                self._tipo_exigido(self._campos.status, TIPOS_SELECAO)
         if prazo is not None:
-            self._tipo_exigido(self._campos.prazo, ("date",))
-            propriedades[self._campos.prazo] = p.date(prazo)
+            if self.tipo_da_coluna(self._campos.prazo) is not None:
+                self._tipo_exigido(self._campos.prazo, ("date",))
+                propriedades[self._campos.prazo] = p.date(prazo)
+            elif not database_generico:
+                self._tipo_exigido(self._campos.prazo, ("date",))
         if duracao is not None:
-            propriedades[self._campos.duracao] = self._valor_selecao(self._campos.duracao, duracao)
+            if self.tipo_da_coluna(self._campos.duracao) is not None:
+                propriedades[self._campos.duracao] = self._valor_selecao(
+                    self._campos.duracao, duracao
+                )
+            elif not database_generico:
+                self._tipo_exigido(self._campos.duracao, TIPOS_SELECAO)
         if areas is not None:
-            self._tipo_exigido(self._campos.areas, ("relation",))
-            propriedades[self._campos.areas] = p.relation(areas)
+            if self.tipo_da_coluna(self._campos.areas) is not None:
+                self._tipo_exigido(self._campos.areas, ("relation",))
+                propriedades[self._campos.areas] = p.relation(areas)
+            elif not database_generico:
+                self._tipo_exigido(self._campos.areas, ("relation",))
 
         pagina = self._client.criar_pagina(self._database_id, propriedades)
-        tarefa = tarefa_de_pagina(pagina, self._campos)
+        campos_reais = CamposTarefa(
+            nome=coluna_titulo.nome,
+            status=self._campos.status,
+            prazo=self._campos.prazo,
+            duracao=self._campos.duracao,
+            areas=self._campos.areas,
+        )
+        tarefa = tarefa_de_pagina(pagina, campos_reais)
         self._enriquecer_areas([tarefa])
         return tarefa
 

@@ -389,3 +389,24 @@ configuráveis via `CamposTarefa` para quem precisar.
 novos, 5 falham no código antigo (verificado revertendo `tasks.py`). No workspace real, com o
 código do módulo: `listar --status "Entrada"` → 31 linhas e
 `listar --duracao "Poucas horas"` → 44 linhas, ambos antes impossíveis.
+
+---
+
+## [2026-08-25] `TaskList.criar` descobre o título do database
+
+**Sintoma.** A criação de uma linha em `Relatórios diários` falhava porque o
+payload sempre enviava a propriedade `Tarefa`, embora o título real se chamasse
+`Relatório`. A API aceitava criação direta com o schema correto; o defeito estava
+no modelo compartilhado.
+
+**Decisão.** `TaskList.criar` lê o schema antes do POST, encontra a única coluna
+`title` com `descrever_database` e usa seu nome real. Os atalhos do modelo de
+tarefas (`Etapa`, `Prazo`, `Esforço`, `Áreas da vida`) só entram quando a coluna
+existe com tipo compatível. A assinatura e o retorno `Tarefa` foram preservados;
+somente a criação ficou genérica, sem fingir que listar/editar databases
+arbitrários também são operações de tarefas.
+
+**Validação.** 355 testes verdes e `ruff` limpo. No workspace real, foram
+criadas com sucesso uma linha em `Relatórios diários` (título `Relatório`) e
+outra em `Tasks` (título `Tarefa`, com `Etapa`/`Esforço`); ambas foram arquivadas
+ao fim.

@@ -74,7 +74,8 @@ notion-starter/
 - **Schema** — leitura e comparação de schemas de databases com
   `comparar_schema`.
 - **Tarefas** — modelos `Tarefa` e `TaskList` para criar, editar, mover e concluir
-  tarefas.
+  tarefas; na criação, a coluna de título é descoberta pelo schema para também
+  aceitar databases genéricos.
 - **Conteúdo** — leitura e escrita de blocos, incluindo conversão Markdown ↔ blocos.
 - **Propriedades** — builders `properties.*` para `title`, `rich_text`, `select`,
   `status`, `number`, `date`, `relation` e outros tipos; textos acima de 2.000
