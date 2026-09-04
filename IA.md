@@ -14,14 +14,15 @@
 
 ## 📊 ESTADO ATUAL (RESUMO VIVO)
 
-Última atualização: [2026-07-18]
+Última atualização: [2026-09-04]
 
-- Fase: biblioteca base estável, consumida pelo CLI e pelo app do ecossistema.
-- Qualidade: 235 testes verdes e `ruff` limpo; CI cobre Python 3.10–3.13.
+- Fase: biblioteca base estável, preparada como pacote `notion-starter` para a
+  distribuição da CLI única.
+- Qualidade: 355 testes verdes e `ruff` limpo; CI cobre Python 3.10–3.13.
 - Documentação: README alinhado ao Felixo System Design e contrato de qualidade
   centralizado em `QUALIDADE.md`.
-- Próximos passos abertos: mais tipos de propriedade/bloco e escrita em data
-  sources.
+- Próximos passos abertos: confirmação do contrato de publicação no PyPI e mais
+  tipos de propriedade/bloco e escrita em data sources.
 - Risco conhecido: consumidores devem fixar suas próprias resoluções de
   dependências quando precisarem de builds reproduzíveis.
 
@@ -365,3 +366,16 @@ arbitrários também são operações de tarefas.
 criadas com sucesso uma linha em `Relatórios diários` (título `Relatório`) e
 outra em `Tasks` (título `Tarefa`, com `Etapa`/`Esforço`); ambas foram arquivadas
 ao fim.
+
+## [2026-09-04] Pacote base preparado para a distribuição sem clone
+
+O `pyproject.toml` foi alinhado ao contrato de distribuição da CLI única: a
+versão candidata do `notion-starter` passou a ser `0.3.0`, com build Hatchling,
+wheel e sdist. Nenhum código de domínio foi alterado nesta etapa; o pacote segue
+sendo a fonte compartilhada para o CLI e o app, sem depender de uma URL Git nos
+consumidores.
+
+**Validação:** `ruff check .` limpo, **355 testes verdes**, `twine check` aprovado
+para wheel e sdist e import validado em ambiente limpo. A publicação efetiva no
+PyPI não foi executada: nome final, ownership e metadados legais ainda precisam
+de confirmação explícita.

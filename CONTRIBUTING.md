@@ -30,7 +30,7 @@ conversa antes de você investir tempo no código.
 ```bash
 git clone https://github.com/Felipe-Alcantara/notion-starter.git
 cd notion-starter
-pip install -e ".[dev]"
+python -m pip install -e ".[dev]"
 
 # Gate de qualidade (HTTP é mockado — não precisa de token nem rede)
 ruff check .

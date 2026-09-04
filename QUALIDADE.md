@@ -36,3 +36,10 @@ entrar em conflito com os consumidores e impedir uma resolução compatível.
 A compatibilidade é verificada continuamente pela matriz da CI em Python
 3.10–3.13. Aplicações consumidoras continuam responsáveis por fixar o ambiente
 final com seu próprio lockfile quando precisarem de builds reproduzíveis.
+
+## Distribuição
+
+O `pyproject.toml` também é a fonte do pacote `notion-starter` (versão candidata
+`0.3.0`), com wheel e sdist validados por `twine check`. A publicação no PyPI
+fica condicionada à confirmação do nome, ownership e metadados legais do
+ecossistema. O artefato não leva tokens, perfis locais ou banco SQLite.

@@ -94,9 +94,14 @@ Exemplo de fluxo: `Markdown` → blocos tipados da API do Notion → página atu
 ### Instalação
 
 ```bash
-# Instale diretamente do repositório
-pip install git+https://github.com/Felipe-Alcantara/notion-starter.git
+# Instale a versão candidata quando ela estiver publicada no PyPI
+python -m pip install "notion-starter>=0.3.0,<0.4.0"
 ```
+
+O pacote `0.3.0` está preparado para distribuição como wheel/sdist Python e não
+depende de checkout Git. A publicação efetiva depende da confirmação do contrato
+de distribuição do ecossistema.
+Para desenvolvimento, clone o repositório e use `python -m pip install -e ".[dev]"`.
 
 Para desenvolvimento:
 
@@ -104,7 +109,7 @@ Para desenvolvimento:
 # Clone e instale com as dependências de desenvolvimento
 git clone https://github.com/Felipe-Alcantara/notion-starter.git
 cd notion-starter
-pip install -e ".[dev]"
+python -m pip install -e ".[dev]"
 ```
 
 ### Uso rápido
