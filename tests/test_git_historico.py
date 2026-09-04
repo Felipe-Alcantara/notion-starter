@@ -61,6 +61,28 @@ class TestColetarCommits:
         assert primeiro.autor == "Dev de Teste"
         assert primeiro.hash_curto
 
+    def test_decodifica_mensagem_utf8_fora_da_codepage_do_console(self, repositorio, tmp_path):
+        # Regressão: subprocess.run(text=True) sem encoding= usa a codepage do
+        # console no Windows (cp1252 em pt-BR). Uma mensagem com acentuação e
+        # emoji em UTF-8 derrubava a thread leitora do git em silêncio e
+        # `coletar_commits` quebrava mais adiante com AttributeError (saida
+        # virava None). Aqui a mensagem deve voltar intacta em qualquer SO.
+        import os
+
+        (repositorio / "d.txt").write_text("x", encoding="utf-8")
+        _git(repositorio, "add", "d.txt")
+        ambiente = {
+            **os.environ,
+            "GIT_AUTHOR_DATE": "2026-07-23T10:00:00",
+            "GIT_COMMITTER_DATE": "2026-07-23T10:00:00",
+        }
+        mensagem = "feat: comemoração 🎉 com acentuação âẽîõü não-cp1252"
+        _git(repositorio, "commit", "-q", "-m", mensagem, env=ambiente)
+
+        commits = gh.coletar_commits(repositorio)
+
+        assert commits[-1].assunto == mensagem
+
     def test_recorta_por_intervalo_de_datas(self, repositorio):
         commits = gh.coletar_commits(repositorio, desde="2026-07-22", ate="2026-07-22")
         assert [c.assunto for c in commits] == ["docs: outro dia"]
