@@ -16,7 +16,16 @@ from typing import Any
 
 from . import properties as p
 from .client import NotionClient
+from .exceptions import NotionSchemaError
 from .schema import descrever_database
+
+#: Tipos de coluna que guardam o **nome de uma opção**.
+#:
+#: Na leitura ``status`` e ``select`` são indistinguíveis (ambos devolvem
+#: ``{"name": ...}``), mas na escrita e no filtro o Notion trata os dois como
+#: tipos diferentes e recusa com 400 quem errar. Por isso o tipo real precisa
+#: vir do schema do database, nunca de um palpite do código.
+TIPOS_SELECAO = ("status", "select")
 
 
 @dataclass
@@ -162,6 +171,67 @@ class TaskList:
         self._campos = campos or CamposTarefa()
         self._cache_areas: dict[str, str] = {}  # {area_id: nome}
 
+    # -- Schema ----------------------------------------------------------------
+
+    def tipo_da_coluna(self, nome: str) -> str | None:
+        """Tipo real de uma coluna no database, ou ``None`` se ela não existe.
+
+        Lê do schema em vez de assumir. O ``NotionClient`` já guarda o schema em
+        cache com TTL, então consultar aqui não custa uma requisição por campo.
+
+        Args:
+            nome: Nome exato da coluna no Notion.
+
+        Returns:
+            O tipo declarado (``"status"``, ``"select"``, ``"date"``…) ou
+            ``None`` quando a coluna não existe no database.
+        """
+
+        props = self._client.get_database(self._database_id).get("properties") or {}
+        prop = props.get(nome)
+        if not isinstance(prop, dict):
+            return None
+        tipo = prop.get("type")
+        return str(tipo) if tipo else None
+
+    def _tipo_exigido(self, coluna: str, tipos: tuple[str, ...]) -> str:
+        """Valida a coluna contra o schema antes de montar payload ou filtro.
+
+        Falhar aqui é muito melhor do que falhar na API: o Notion responde 400
+        com um texto genérico, enquanto :class:`NotionSchemaError` diz qual
+        coluna está errada, o que se esperava e o que o database tem de fato.
+
+        Args:
+            coluna: Nome da coluna a usar.
+            tipos: Tipos aceitáveis para a operação pretendida.
+
+        Returns:
+            O tipo real da coluna, já validado.
+
+        Raises:
+            NotionSchemaError: Se a coluna não existe ou é de outro tipo.
+        """
+
+        tipo = self.tipo_da_coluna(coluna)
+        if tipo is None:
+            raise NotionSchemaError(faltando=[coluna])
+        if tipo not in tipos:
+            raise NotionSchemaError(tipo_errado=[(coluna, " ou ".join(tipos), tipo)])
+        return tipo
+
+    def _valor_selecao(self, coluna: str, valor: str) -> dict[str, Any]:
+        """Monta o valor de uma coluna de seleção no tipo que ela realmente tem."""
+
+        if self._tipo_exigido(coluna, TIPOS_SELECAO) == "status":
+            return p.status(valor)
+        return p.select(valor)
+
+    def _filtro_selecao(self, coluna: str, valor: str) -> dict[str, Any]:
+        """Monta o filtro de uma coluna de seleção no tipo que ela realmente tem."""
+
+        tipo = self._tipo_exigido(coluna, TIPOS_SELECAO)
+        return {"property": coluna, tipo: {"equals": valor}}
+
     # -- Leitura ---------------------------------------------------------------
 
     def listar(
@@ -188,9 +258,11 @@ class TaskList:
 
         filtros: list[dict[str, Any]] = []
         if status is not None:
-            filtros.append({"property": self._campos.status, "status": {"equals": status}})
+            filtros.append(self._filtro_selecao(self._campos.status, status))
         if duracao is not None:
-            filtros.append({"property": self._campos.duracao, "status": {"equals": duracao}})
+            filtros.append(self._filtro_selecao(self._campos.duracao, duracao))
+        if areas:
+            self._tipo_exigido(self._campos.areas, ("relation",))
         for area_id in areas or []:
             filtros.append({"property": self._campos.areas, "relation": {"contains": area_id}})
 
@@ -269,31 +341,35 @@ class TaskList:
                 f"O database {self._database_id} não possui uma coluna de título."
             )
 
-        schema = database.get("properties") or {}
-
-        def tipo_da_coluna(coluna: str) -> str | None:
-            info = schema.get(coluna)
-            return str(info.get("type")) if isinstance(info, dict) else None
-
         propriedades: dict[str, Any] = {coluna_titulo.nome: p.title(nome)}
+        database_generico = coluna_titulo.nome != self._campos.nome
 
-        tipo_status = tipo_da_coluna(self._campos.status)
-        if status is not None and tipo_status == "status":
-            propriedades[self._campos.status] = p.status(status)
-        elif status is not None and tipo_status == "select":
-            propriedades[self._campos.status] = p.select(status)
-
-        if prazo is not None and tipo_da_coluna(self._campos.prazo) == "date":
-            propriedades[self._campos.prazo] = p.date(prazo)
-
-        tipo_duracao = tipo_da_coluna(self._campos.duracao)
-        if duracao is not None and tipo_duracao == "status":
-            propriedades[self._campos.duracao] = p.status(duracao)
-        elif duracao is not None and tipo_duracao == "select":
-            propriedades[self._campos.duracao] = p.select(duracao)
-
-        if areas is not None and tipo_da_coluna(self._campos.areas) == "relation":
-            propriedades[self._campos.areas] = p.relation(areas)
+        if status is not None:
+            if self.tipo_da_coluna(self._campos.status) is not None:
+                propriedades[self._campos.status] = self._valor_selecao(
+                    self._campos.status, status
+                )
+            elif not database_generico:
+                self._tipo_exigido(self._campos.status, TIPOS_SELECAO)
+        if prazo is not None:
+            if self.tipo_da_coluna(self._campos.prazo) is not None:
+                self._tipo_exigido(self._campos.prazo, ("date",))
+                propriedades[self._campos.prazo] = p.date(prazo)
+            elif not database_generico:
+                self._tipo_exigido(self._campos.prazo, ("date",))
+        if duracao is not None:
+            if self.tipo_da_coluna(self._campos.duracao) is not None:
+                propriedades[self._campos.duracao] = self._valor_selecao(
+                    self._campos.duracao, duracao
+                )
+            elif not database_generico:
+                self._tipo_exigido(self._campos.duracao, TIPOS_SELECAO)
+        if areas is not None:
+            if self.tipo_da_coluna(self._campos.areas) is not None:
+                self._tipo_exigido(self._campos.areas, ("relation",))
+                propriedades[self._campos.areas] = p.relation(areas)
+            elif not database_generico:
+                self._tipo_exigido(self._campos.areas, ("relation",))
 
         pagina = self._client.criar_pagina(self._database_id, propriedades)
         campos_reais = CamposTarefa(
@@ -341,12 +417,14 @@ class TaskList:
         if nome is not None:
             propriedades[self._campos.nome] = p.title(nome)
         if status is not None:
-            propriedades[self._campos.status] = p.status(status)
+            propriedades[self._campos.status] = self._valor_selecao(self._campos.status, status)
         if prazo is not None:
+            self._tipo_exigido(self._campos.prazo, ("date",))
             propriedades[self._campos.prazo] = p.date(prazo)
         if duracao is not None:
-            propriedades[self._campos.duracao] = p.status(duracao)
+            propriedades[self._campos.duracao] = self._valor_selecao(self._campos.duracao, duracao)
         if areas is not None:
+            self._tipo_exigido(self._campos.areas, ("relation",))
             propriedades[self._campos.areas] = p.relation(areas)
 
         if not propriedades:
