@@ -4,8 +4,8 @@
 
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![Requests](https://img.shields.io/badge/Requests-2.25%2B-20232A?style=for-the-badge&logo=python&logoColor=white)
-![Licença MIT](https://img.shields.io/badge/Licen%C3%A7a-MIT-green?style=for-the-badge)
 [![PyPI](https://img.shields.io/pypi/v/notion-starter?style=for-the-badge&label=PyPI)](https://pypi.org/project/notion-starter/)
+![Licença MIT](https://img.shields.io/badge/Licen%C3%A7a-MIT-green?style=for-the-badge)
 
 **Biblioteca Python resiliente para operar a API oficial do Notion e compartilhar regras de negócio entre interfaces.**
 
