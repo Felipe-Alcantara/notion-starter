@@ -16,13 +16,13 @@
 
 Última atualização: [2026-09-04]
 
-- Fase: biblioteca base estável, preparada como pacote `notion-starter` para a
-  distribuição da CLI única.
+- Fase: biblioteca base estável, publicada como pacote `notion-starter==0.3.0`
+  para a distribuição da CLI única.
 - Qualidade: 355 testes verdes e `ruff` limpo; CI cobre Python 3.10–3.13.
 - Documentação: README alinhado ao Felixo System Design e contrato de qualidade
   centralizado em `QUALIDADE.md`.
-- Próximos passos abertos: confirmação do contrato de publicação no PyPI e mais
-  tipos de propriedade/bloco e escrita em data sources.
+- Próximos passos abertos: mais tipos de propriedade/bloco e escrita em data
+  sources, como contribuições isoladas.
 - Risco conhecido: consumidores devem fixar suas próprias resoluções de
   dependências quando precisarem de builds reproduzíveis.
 
@@ -379,3 +379,12 @@ consumidores.
 para wheel e sdist e import validado em ambiente limpo. A publicação efetiva no
 PyPI não foi executada: nome final, ownership e metadados legais ainda precisam
 de confirmação explícita.
+
+## [2026-09-04] Documentação e estado público atualizados
+
+O README, `AGENTS.md`, `CONTRIBUTING.md` e `QUALIDADE.md` agora distinguem o uso
+do pacote público do fluxo de desenvolvimento, apontam para o PyPI e registram
+`Felipe Alcantara` como titular legal. O resumo vivo deixa de tratar a publicação
+como pendência; itens futuros ficam restritos a novas capacidades da biblioteca.
+Também foi corrigida a referência de distribuição para indicar que o produto
+completo é instalado pela fachada `notion-automacoes[app]`.

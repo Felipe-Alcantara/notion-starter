@@ -9,6 +9,10 @@ novos helpers, exemplos, testes e melhorias de resiliência são bem-vindos.
 > Contribuições devem preservar os contratos existentes, a documentação viva e o
 > gate de qualidade descrito abaixo.
 
+O pacote publicado é [`notion-starter`](https://pypi.org/project/notion-starter/).
+Para usar a CLI ou o app, contribua nos repositórios correspondentes; não crie
+entry points de aplicação nesta biblioteca sem atualizar o contrato do hub.
+
 ---
 
 ## 🚀 Como Contribuir
@@ -33,7 +37,7 @@ cd notion-starter
 python -m pip install -e ".[dev]"
 
 # Gate de qualidade (HTTP é mockado — não precisa de token nem rede)
-ruff check .
+python -m ruff check .
 python -m pytest
 ```
 

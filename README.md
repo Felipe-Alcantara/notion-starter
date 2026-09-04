@@ -5,6 +5,7 @@
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![Requests](https://img.shields.io/badge/Requests-2.25%2B-20232A?style=for-the-badge&logo=python&logoColor=white)
 ![Licença MIT](https://img.shields.io/badge/Licen%C3%A7a-MIT-green?style=for-the-badge)
+[![PyPI](https://img.shields.io/pypi/v/notion-starter?style=for-the-badge&label=PyPI)](https://pypi.org/project/notion-starter/)
 
 **Biblioteca Python resiliente para operar a API oficial do Notion e compartilhar regras de negócio entre interfaces.**
 
@@ -94,13 +95,15 @@ Exemplo de fluxo: `Markdown` → blocos tipados da API do Notion → página atu
 ### Instalação
 
 ```bash
-# Instale a versão candidata quando ela estiver publicada no PyPI
+# Instalação pública da biblioteca
 python -m pip install "notion-starter>=0.3.0,<0.4.0"
 ```
 
-O pacote `0.3.0` está preparado para distribuição como wheel/sdist Python e não
-depende de checkout Git. A publicação efetiva depende da confirmação do contrato
-de distribuição do ecossistema.
+O pacote `0.3.0` está publicado no [PyPI](https://pypi.org/project/notion-starter/)
+como wheel e sdist. Ele não depende de checkout Git e não instala Django, React
+ou a CLI. Para operar o produto completo, use
+[`notion-automacoes[app]`](https://pypi.org/project/notion-automacoes/).
+
 Para desenvolvimento, clone o repositório e use `python -m pip install -e ".[dev]"`.
 
 Para desenvolvimento:
@@ -163,7 +166,7 @@ Este projeto está sob a licença MIT — veja [`LICENSE`](LICENSE).
 
 ## 👤 Autor
 
-**Felipe Martin**
+**Felipe Alcantara**
 
 - GitHub: [@Felipe-Alcantara](https://github.com/Felipe-Alcantara)
 - Repositório: [notion-starter](https://github.com/Felipe-Alcantara/notion-starter)
