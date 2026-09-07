@@ -430,3 +430,27 @@ Exposto na CLI como `notion-tasks renomear-coluna <database_id> <nome_atual>
 rejeições, reaproveitando o `ClienteFake` já usado por `garantir_coluna`.
 
 **Validação:** 369 testes verdes e `ruff check .` limpo.
+
+## [2026-09-07] `listar_linhas` ganhou o parâmetro `propriedades`
+
+Por design, `listar_linhas` sempre devolveu só `{"id", "titulo", "url"}` por
+linha — documentado assim no próprio docstring. Quem precisava das
+propriedades completas de uma database inteira (classificar colunas em massa,
+cruzar uma relação contra outra, auditar cobertura) tinha que sair da
+ferramenta e chamar `consultar_database`/`obter_pagina` linha a linha direto
+pelo client. Bateu nesse teto pelo menos quatro vezes numa única sessão de
+backfill de propriedades na database de Tarefas.
+
+`listar_linhas(database_id, propriedades=True)` agora acrescenta, em cada
+linha, a chave `"propriedades"` com o dicionário `nome -> valor simples` — o
+mesmo formato que `ler_conteudo` já devolve, produzido pelo mesmo leitor
+(`notion_starter.readers.extrair_valores`), então quem já lê o resultado de
+`conteudo` reconhece o formato sem aprender nada novo. Continua resolvendo
+*data sources* como antes; a diferença é só o que cada linha carrega.
+`propriedades=False` (padrão) mantém a resposta enxuta de sempre — nenhum
+consumidor existente muda de comportamento.
+
+Exposto na CLI como `notion-tasks linhas <database_id> --completo`.
+
+**Validação:** 373 testes verdes (4 novos) e `ruff check .` limpo. Testado ao
+vivo contra a database "Áreas da vida" real, com e sem `--completo`.

@@ -572,8 +572,9 @@ def buscar(
 def listar_linhas(
     database_id: str,
     *,
+    propriedades: bool = False,
     cliente: NotionClient | None = None,
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """Lista as linhas (páginas) de um database, resolvendo *data sources*.
 
     Um database não tem "conteúdo" em blocos: o que ele guarda são linhas. Esta
@@ -582,28 +583,40 @@ def listar_linhas(
 
     Args:
         database_id: ID do database.
+        propriedades: Quando ``True``, cada linha ganha a chave extra
+            ``"propriedades"`` com todas as colunas da página já reduzidas a
+            ``nome -> valor simples`` (mesmo leitor usado por
+            :func:`ler_conteudo`, via :func:`~notion_starter.readers.extrair_valores`)
+            — cobre analisar um database inteiro sem uma chamada de
+            ``conteudo``/``obter_pagina`` por linha. ``False`` (padrão) mantém
+            a resposta enxuta de sempre.
         cliente: Cliente Notion opcional (injeção para testes/uso alternativo).
 
     Returns:
-        Lista de ``{"id", "titulo", "url"}`` — uma linha por página do database.
-        Vazia quando o database não tem *data source* acessível à integração
-        (compartilhe-o com a integração no Notion para liberar a leitura).
+        Lista de ``{"id", "titulo", "url"}`` — uma linha por página do
+        database, com ``"propriedades"`` a mais quando pedido. Vazia quando o
+        database não tem *data source* acessível à integração (compartilhe-o
+        com a integração no Notion para liberar a leitura).
     """
 
     cli = cliente or _cliente_padrao()
-    linhas: list[dict[str, str]] = []
+    if propriedades:
+        from notion_starter.readers import extrair_valores
+
+    linhas: list[dict[str, Any]] = []
     for fonte in cli.listar_data_sources(database_id):
         fonte_id = fonte.get("id")
         if not fonte_id:
             continue
         for pagina in cli.consultar_data_source(fonte_id, buscar_todos=True):
-            linhas.append(
-                {
-                    "id": pagina.get("id", ""),
-                    "titulo": _titulo_de_item(pagina),
-                    "url": pagina.get("url", ""),
-                }
-            )
+            linha: dict[str, Any] = {
+                "id": pagina.get("id", ""),
+                "titulo": _titulo_de_item(pagina),
+                "url": pagina.get("url", ""),
+            }
+            if propriedades:
+                linha["propriedades"] = extrair_valores(pagina)
+            linhas.append(linha)
     return linhas
 
 
