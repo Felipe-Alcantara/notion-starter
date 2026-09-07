@@ -106,3 +106,68 @@ def garantir_coluna(
         return False
     cli.atualizar_database(database_id, propriedades={nome_coluna: definicao})
     return True
+
+
+def renomear_coluna(
+    database_id: str,
+    nome_atual: str,
+    novo_nome: str,
+    *,
+    cliente: NotionClient | None = None,
+) -> dict[str, Any]:
+    """Renomeia uma propriedade já existente no schema, sem mexer nas linhas.
+
+    Cobre a lacuna que sobra depois de :func:`garantir_coluna`: o Notion cria
+    sozinho a coluna espelho de toda relação nova com um nome genérico (ex.:
+    ``"Related to <database> (<coluna>)"``), e não havia como corrigir isso
+    sem sair da ferramenta. Usa o *data source* (modelo novo do Notion) quando
+    o database expõe um; cai para o endpoint clássico de database caso
+    contrário — mesma estratégia de :func:`garantir_coluna`.
+
+    Args:
+        database_id: ID do database a alterar.
+        nome_atual: Nome exato da propriedade a renomear (sensível a maiúsculas).
+        novo_nome: Novo nome da propriedade.
+        cliente: Cliente Notion opcional (injeção para testes).
+
+    Returns:
+        O objeto atualizado (*data source* ou database, conforme o caminho usado).
+
+    Raises:
+        ValueError: Se ``database_id``/``nome_atual``/``novo_nome`` forem
+            vazios, se ``nome_atual`` não existir no schema, ou se
+            ``novo_nome`` colidir com outra coluna já existente.
+    """
+
+    database_id = (database_id or "").strip()
+    nome_atual = (nome_atual or "").strip()
+    novo_nome = (novo_nome or "").strip()
+    if not database_id:
+        raise ValueError("database_id é obrigatório.")
+    if not nome_atual:
+        raise ValueError("nome_atual é obrigatório.")
+    if not novo_nome:
+        raise ValueError("novo_nome é obrigatório.")
+
+    cli = cliente or _cliente_padrao()
+
+    def _validar(propriedades: dict[str, object]) -> None:
+        if nome_atual not in propriedades:
+            raise ValueError(f"Coluna {nome_atual!r} não existe no schema.")
+        if novo_nome != nome_atual and novo_nome in propriedades:
+            raise ValueError(f"Já existe uma coluna chamada {novo_nome!r}.")
+
+    fontes = cli.listar_data_sources(database_id)
+    if fontes:
+        data_source_id = str(fontes[0].get("id") or "")
+        fonte = cli.get_data_source(data_source_id)
+        _validar(fonte.get("properties", {}))
+        return cli.atualizar_data_source(
+            data_source_id, propriedades={nome_atual: {"name": novo_nome}}
+        )
+
+    database = cli.get_database(database_id)
+    _validar(database.get("properties", {}))
+    return cli.atualizar_database(
+        database_id, propriedades={nome_atual: {"name": novo_nome}}
+    )

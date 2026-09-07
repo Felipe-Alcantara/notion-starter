@@ -76,3 +76,52 @@ def test_garantir_coluna_rejeita_nome_vazio():
     cliente = ClienteFake({})
     with pytest.raises(ValueError):
         svc.garantir_coluna("db1", "", {"select": {}}, cliente=cliente)
+
+
+def test_renomear_coluna_via_data_source():
+    cliente = ClienteFake(
+        {"Nome": {"type": "title", "title": {}}, "Related to X": {"type": "relation"}}
+    )
+
+    svc.renomear_coluna("db1", "Related to X", "Bloqueia", cliente=cliente)
+
+    assert cliente.atualizacoes_data_source == [
+        ("ds1", {"Related to X": {"name": "Bloqueia"}})
+    ]
+    assert cliente.atualizacoes_database == []
+
+
+def test_renomear_coluna_usa_endpoint_classico_sem_data_source():
+    cliente = ClienteFake(
+        {"Nome": {"type": "title", "title": {}}, "Related to X": {"type": "relation"}},
+        com_data_source=False,
+    )
+
+    svc.renomear_coluna("db1", "Related to X", "Bloqueia", cliente=cliente)
+
+    assert cliente.atualizacoes_database == [
+        ("db1", {"Related to X": {"name": "Bloqueia"}})
+    ]
+    assert cliente.atualizacoes_data_source == []
+
+
+def test_renomear_coluna_rejeita_coluna_inexistente():
+    cliente = ClienteFake({"Nome": {"type": "title", "title": {}}})
+    with pytest.raises(ValueError):
+        svc.renomear_coluna("db1", "Não existe", "Novo nome", cliente=cliente)
+
+
+def test_renomear_coluna_rejeita_colisao_de_nome():
+    cliente = ClienteFake(
+        {"Nome": {"type": "title", "title": {}}, "Idioma": {"type": "select"}}
+    )
+    with pytest.raises(ValueError):
+        svc.renomear_coluna("db1", "Nome", "Idioma", cliente=cliente)
+
+
+def test_renomear_coluna_rejeita_argumentos_vazios():
+    cliente = ClienteFake({"Nome": {"type": "title", "title": {}}})
+    with pytest.raises(ValueError):
+        svc.renomear_coluna("db1", "", "Novo nome", cliente=cliente)
+    with pytest.raises(ValueError):
+        svc.renomear_coluna("db1", "Nome", "", cliente=cliente)

@@ -407,3 +407,26 @@ preenchimento novo.
 
 **Validação:** 364 testes verdes e `ruff check .` limpo; importação pública
 confirmada pelo clone editável apontado por `check-dev.py`.
+
+## [2026-09-07] `services/schema.py` ganhou `renomear_coluna`
+
+Faltava um caso irmão de `garantir_coluna`: o Notion cria sozinho a coluna
+espelho de toda relação nova com nome genérico (`"Related to <database>
+(<coluna>)"`), e não existia nenhuma função pra corrigir isso — só
+`atualizar_database`/`atualizar_data_source` crus, chamados na mão fora de
+qualquer serviço (foi assim que a coluna espelho de "Bloqueada por" virou
+"Bloqueia" na database de Tarefas, direto por script).
+
+`renomear_coluna(database_id, nome_atual, novo_nome, cliente=...)` segue a mesma
+estratégia de `garantir_coluna`: resolve o *data source* do database (modelo
+novo, `PATCH /data_sources/{id}`, versão `2025-09-03`) quando existe, cai para o
+endpoint clássico de database caso contrário. Valida que `nome_atual` existe no
+schema e que `novo_nome` não colide com outra coluna antes de gravar — as duas
+validações lêem o schema atual (via `get_data_source`/`get_database`) antes do
+PATCH, então o erro aparece antes da escrita, não depois.
+
+Exposto na CLI como `notion-tasks renomear-coluna <database_id> <nome_atual>
+<novo_nome>`. Testes cobrem os dois caminhos (data source e clássico) e as duas
+rejeições, reaproveitando o `ClienteFake` já usado por `garantir_coluna`.
+
+**Validação:** 369 testes verdes e `ruff check .` limpo.
