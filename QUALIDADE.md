@@ -50,3 +50,7 @@ instalar a fachada `notion-automacoes[app]`, não adicionar dependências Git.
 Mudanças de API pública, dependências, exemplos ou distribuição exigem atualização
 do `README.md` e de `IA.md` no mesmo passo. Exemplos usam placeholders; não
 incluem tokens, IDs reais, caminhos privados ou arquivos gerados.
+
+O helper de classificação em lote mantém o *dry-run* como comportamento padrão:
+qualquer aplicação precisa de um callback ou de um cliente/coluna explícitos.
+Esse contrato evita que um relatório de distribuição altere linhas por acidente.

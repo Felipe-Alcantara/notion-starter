@@ -82,6 +82,9 @@ notion-starter/
   `status`, `number`, `date`, `relation` e outros tipos; textos acima de 2.000
   unidades UTF-16 são fatiados automaticamente.
 - **Inventário** — varredura de páginas, databases e árvore do workspace.
+- **Classificação em lote** — `notion_starter.services.classificacao` calcula a
+  distribuição de uma regra sobre linhas já buscadas, lista as linhas sem
+  classificação e só escreve quando o chamador pede explicitamente.
 - **Relatórios DOCX** — `notion_starter.services.relatorios_docx` exporta um arquivo
   por data, combinando propriedades e corpo sem arquivos intermediários.
 - **Utilidades** — saneamento de texto/JSON, `fatiar_utf16`, logging e readers.
@@ -91,6 +94,28 @@ Exemplo de fluxo: `Markdown` → blocos tipados da API do Notion → página atu
 ---
 
 ## 🎯 Como Usar
+
+### Classificação em lote com dry-run
+
+As linhas são buscadas pelo chamador para que o relatório possa ser conferido
+antes da escrita. O padrão é um *dry-run*; a aplicação pode ocorrer depois, e o
+valor é tratado como `select` por padrão:
+
+```python
+from notion_starter.services.classificacao import (
+    aplicar_classificacoes,
+    classificar_em_lote,
+)
+
+relatorio = classificar_em_lote(linhas, regra_de_classificacao)
+print(relatorio.distribuicao)
+print(relatorio.ids_sem_classificacao)
+
+aplicar_classificacoes(relatorio, cliente=cliente, coluna="Tipo")
+```
+
+Para outro tipo de coluna, passe um `montar_propriedade`, como
+`properties.status`. Linhas sem classificação nunca são alteradas.
 
 ### Instalação
 

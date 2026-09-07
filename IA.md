@@ -388,3 +388,22 @@ do pacote público do fluxo de desenvolvimento, apontam para o PyPI e registram
 como pendência; itens futuros ficam restritos a novas capacidades da biblioteca.
 Também foi corrigida a referência de distribuição para indicar que o produto
 completo é instalado pela fachada `notion-automacoes[app]`.
+
+## [2026-09-07] Classificação em lote com dry-run virou serviço compartilhado
+
+Três preenchimentos em massa da sessão repetiram o mesmo script: consultar linhas,
+classificar, contar a distribuição, revisar e atualizar. O novo módulo
+`services/classificacao.py` extrai esse andaime sem assumir como as linhas foram
+buscadas. `classificar_em_lote` recebe as linhas e uma regra, devolve
+`ResultadoClassificacao` com distribuição, linhas sem classificação e pares
+linha/valor; nenhuma escrita ocorre por padrão. A aplicação pode ser explícita na
+mesma chamada (`aplicar=True`) ou posterior, por `aplicar_classificacoes`, usando
+callback ou `NotionClient` com nome da coluna. O atalho do cliente monta `select`
+por padrão e aceita outro builder para `status`, `rich_text` ou demais tipos.
+
+Motivo: o relatório precisa ser revisável antes de tocar centenas de linhas, e a
+regra de negócio não deve reimplementar o ciclo fetch → contagem → apply em cada
+preenchimento novo.
+
+**Validação:** 364 testes verdes e `ruff check .` limpo; importação pública
+confirmada pelo clone editável apontado por `check-dev.py`.
