@@ -39,7 +39,7 @@ final com seu próprio lockfile quando precisarem de builds reproduzíveis.
 
 ## Distribuição
 
-O `pyproject.toml` é a fonte do pacote público `notion-starter` (`0.3.0`), com
+O `pyproject.toml` é a fonte do pacote público `notion-starter` (`0.3.1`), com
 wheel e sdist validados por `twine check` e publicados no
 [PyPI](https://pypi.org/project/notion-starter/). O artefato não leva tokens,
 perfis locais ou banco SQLite. O consumidor que precisa do produto completo deve

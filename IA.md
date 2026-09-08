@@ -14,11 +14,11 @@
 
 ## 📊 ESTADO ATUAL (RESUMO VIVO)
 
-Última atualização: [2026-09-04]
+Última atualização: [2026-09-08]
 
-- Fase: biblioteca base estável, publicada como pacote `notion-starter==0.3.0`
+- Fase: biblioteca base estável, preparada para publicação como pacote `notion-starter==0.3.1`
   para a distribuição da CLI única.
-- Qualidade: 355 testes verdes e `ruff` limpo; CI cobre Python 3.10–3.13.
+- Qualidade: 373 testes verdes e `ruff` limpo; CI cobre Python 3.10–3.13.
 - Documentação: README alinhado ao Felixo System Design e contrato de qualidade
   centralizado em `QUALIDADE.md`.
 - Próximos passos abertos: mais tipos de propriedade/bloco e escrita em data
@@ -454,3 +454,18 @@ Exposto na CLI como `notion-tasks linhas <database_id> --completo`.
 
 **Validação:** 373 testes verdes (4 novos) e `ruff check .` limpo. Testado ao
 vivo contra a database "Áreas da vida" real, com e sem `--completo`.
+
+---
+
+## [2026-09-08] Release 0.3.1 preparado para publicar a API de propriedades
+
+O código de `listar_linhas(database_id, propriedades=True)` já estava no
+repositório depois da tag `v0.3.0`, mas o PyPI ainda entregava somente o
+artefato `0.3.0`. Como a mudança é retrocompatível e o CLI declara
+`notion-starter>=0.3.0,<0.4.0`, a correção é um release patch `0.3.1`, sem
+alterar a dependência do consumidor. Foram atualizados o metadado do pacote, a
+versão exposta por `notion_starter.__version__` e a documentação pública.
+
+A publicação será feita pela tag `v0.3.1`, usando o workflow `release.yml` e o
+Trusted Publishing do PyPI. A confirmação final da publicação e da CI dos
+consumidores deve ser registrada na sequência.

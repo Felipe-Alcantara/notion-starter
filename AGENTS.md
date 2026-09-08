@@ -3,7 +3,7 @@
 Biblioteca Python **base** do ecossistema [Automações do Notion](https://github.com/Felipe-Alcantara/Automa-es-do-Notion) — o hub tem o roteamento completo entre módulos; leia-o se a tarefa envolver o CLI ou o app.
 
 O pacote público é [`notion-starter`](https://pypi.org/project/notion-starter/),
-atualmente em `0.3.0`. Ele é uma biblioteca importável, não possui `start_app.py`
+atualmente em `0.3.1`. Ele é uma biblioteca importável, não possui `start_app.py`
 nem entry point de CLI; a fachada de uso é `notion-automacoes` no módulo CLI.
 
 ## O que vive aqui
