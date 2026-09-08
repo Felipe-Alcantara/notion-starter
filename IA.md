@@ -16,7 +16,7 @@
 
 Última atualização: [2026-09-08]
 
-- Fase: biblioteca base estável, preparada para publicação como pacote `notion-starter==0.3.1`
+- Fase: biblioteca base estável, publicada como pacote `notion-starter==0.3.1`
   para a distribuição da CLI única.
 - Qualidade: 373 testes verdes e `ruff` limpo; CI cobre Python 3.10–3.13.
 - Documentação: README alinhado ao Felixo System Design e contrato de qualidade
@@ -469,3 +469,22 @@ versão exposta por `notion_starter.__version__` e a documentação pública.
 A publicação será feita pela tag `v0.3.1`, usando o workflow `release.yml` e o
 Trusted Publishing do PyPI. A confirmação final da publicação e da CI dos
 consumidores deve ser registrada na sequência.
+
+---
+
+## [2026-09-08] Publicação do release 0.3.1 confirmada
+
+A tag `v0.3.1` foi publicada no commit `ec03490` e o workflow [Release Python
+package #34186364793](https://github.com/Felipe-Alcantara/notion-starter/actions/runs/34186364793)
+passou no build, nos seis smokes de Ubuntu, Windows e macOS com Python 3.10 e
+3.13, e no job de publicação via Trusted Publishing. O PyPI passou a servir
+`notion-starter==0.3.1`.
+
+**Validação de consumo:** uma instalação limpa de
+`notion-automacoes==0.3.0` resolveu `notion-starter==0.3.1`, e a assinatura
+publicada de `listar_linhas` contém `propriedades`.
+
+**CI do consumidor:** os quatro jobs Python da [CI do CLI
+#34166776357](https://github.com/Felipe-Alcantara/notion-tasks-cli/actions/runs/34166776357)
+passaram após a publicação. O problema original era exclusivamente a resolução
+do starter público anterior à implementação.
