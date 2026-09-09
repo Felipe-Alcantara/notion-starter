@@ -97,7 +97,15 @@ def _executar_git(repositorio: Path, argumentos: list[str]) -> str:
         resultado = subprocess.run(
             ["git", "-C", str(repositorio), *argumentos],
             capture_output=True,
-            text=True,
+            # UTF-8 explícito: sem isto, o Windows decodifica com a codepage
+            # do console (cp1252 em pt-BR) e qualquer commit com acento fora
+            # do cp1252 (comum em mensagem em português) derruba a thread
+            # leitora do subprocess em silêncio — _executar_git então "some"
+            # com o stdout (vira None) em vez de levantar um erro claro, e
+            # quem chama quebra mais adiante com AttributeError. errors=
+            # "replace" evita crash até em byte realmente inválido.
+            encoding="utf-8",
+            errors="replace",
             check=True,
             timeout=_TIMEOUT_SEGUNDOS,
         )
