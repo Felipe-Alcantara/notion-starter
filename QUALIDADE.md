@@ -49,7 +49,11 @@ Leitura e escrita de Markdown precisam concordar: o que `blocos_para_markdown`
 devolve é o que quem confere uma edição vê e o que uma reescrita regrava. Por
 isso o código de um bloco `code` sai da leitura sem `strip()` (só as quebras de
 linha das pontas, o mesmo corte da escrita), e um teste de ida e volta com a
-primeira linha recuada guarda esse contrato.
+primeira linha recuada guarda esse contrato. Pelo mesmo motivo, a leitura deixa o
+espaço da ponta fora dos marcadores (`**Nota:** `): a escrita segue o
+flanqueamento do CommonMark e não fecha negrito depois de espaço. A única forma
+que não volta igual é um trecho formatado que começa ou termina com o próprio
+marcador (um tachado de `~`), porque a biblioteca não tem escape com barra.
 
 Os *fakes* desses testes imitam a API real (ordem de filhos, `position`,
 `results` com os irmãos seguintes, 400 nos limites) e o comportamento foi

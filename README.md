@@ -84,7 +84,10 @@ notion-starter/
   aceitar databases genéricos.
 - **Conteúdo** — leitura e escrita de blocos, incluindo conversão Markdown ↔ blocos
   (listas recuadas viram `children` e voltam recuadas na leitura; o código de um
-  bloco `code` volta com o recuo da primeira linha, como foi gravado). Escritas
+  bloco `code` volta com o recuo da primeira linha, como foi gravado). Na
+  escrita, `_` colado a palavra (`snake_case`), marcador entre espaços
+  (`2 * 3`), código inline e `<placeholders>` ficam como texto; só tags de
+  elementos HTML são removidas. Escritas
   destrutivas nunca apagam antes de o conteúdo novo estar gravado:
   - `escrever_conteudo` valida os limites da API antes de tocar na página,
     anexa em lotes (100 blocos, 1000 elementos, 500 KB) e só então apaga o
