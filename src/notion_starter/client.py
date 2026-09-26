@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import time
 from copy import deepcopy
 from typing import Any, Literal
@@ -20,8 +21,10 @@ except ImportError:  # pragma: no cover - fallback para Python 3.10
 
 from .constants import (
     NOTION_BACKOFF_BASE,
+    NOTION_BACKOFF_MAXIMO,
     NOTION_BASE_URL,
     NOTION_DATA_SOURCE_VERSION,
+    NOTION_JITTER,
     NOTION_MAX_RETRIES,
     NOTION_RATE_LIMIT_STATUS_CODES,
     NOTION_RETRYABLE_STATUS_CODES,
@@ -37,6 +40,7 @@ from .exceptions import (
     NotionAPIError,
     NotionConfigurationError,
     NotionConnectionError,
+    NotionEscritaSalvaError,
     NotionHTTPError,
     NotionInvalidResponseError,
 )
@@ -176,6 +180,74 @@ class BlockArchivePayload(TypedDict):
     archived: bool
 
 
+def _eh_leitura(metodo: str, path: str) -> bool:
+    """GET, ou POST que só consulta (``/search`` e ``.../query``)."""
+
+    rota = path.split("?", 1)[0]
+    if metodo.upper() == "GET":
+        return True
+    return metodo.upper() == "POST" and (rota == "/search" or rota.endswith("/query"))
+
+
+def _escrita_foi_salva(dados_adicionais: dict[str, Any]) -> bool:
+    """O 503 de uma escrita diz que ela foi salva?
+
+    Primeiro os campos estruturados (``committed_resource_id``,
+    ``committed_child_ids``); o texto de ``retry_guidance`` ("Do not repeat
+    the write") é só reserva — num update de objeto existente é o único sinal.
+    """
+
+    if dados_adicionais.get("committed_resource_id") or dados_adicionais.get(
+        "committed_child_ids"
+    ):
+        return True
+    orientacao = dados_adicionais.get("retry_guidance")
+    textos = orientacao if isinstance(orientacao, list) else [orientacao]
+    return any("do not repeat the write" in str(texto).lower() for texto in textos if texto)
+
+
+def deve_retentar(
+    *,
+    metodo: str,
+    path: str,
+    status_code: int,
+    idempotente: bool,
+    dados_adicionais: dict[str, Any],
+) -> bool:
+    """Regra única de retentativa (também usada no upload), conforme a documentação.
+
+    https://developers.notion.com/reference/request-limits:
+
+    - 429 e 529 se repetem — **exceto** 429 com ``rate_limit_reason``
+      ``public_api_request_blocked`` (acesso bloqueado; repetir não adianta);
+    - 409/500/502/504 só em operação idempotente;
+    - 503 só em **leitura**: uma escrita pode ter sido salva mesmo com 503, e a
+      documentação pede para conferir o estado antes de repetir.
+
+    Args:
+        metodo: Método HTTP.
+        path: Caminho relativo da chamada.
+        status_code: Status recebido.
+        idempotente: Se repetir a operação preserva o efeito.
+        dados_adicionais: ``additional_data`` do corpo do erro.
+
+    Returns:
+        Se a chamada pode ser repetida (ainda sujeita ao limite de tentativas).
+    """
+
+    if status_code == 429 and (
+        dados_adicionais.get("rate_limit_reason") == "public_api_request_blocked"
+    ):
+        return False
+    if status_code in NOTION_RATE_LIMIT_STATUS_CODES:
+        return True
+    if status_code not in NOTION_RETRYABLE_STATUS_CODES:
+        return False
+    if status_code == 503 and not _eh_leitura(metodo, path):
+        return False
+    return idempotente
+
+
 def _validar_identificador(identificador: str, nome_campo: str) -> str:
     """Valida um identificador obrigatório do Notion.
 
@@ -216,6 +288,9 @@ class NotionClient:
             exceto em 429 com ``Retry-After``, que tem prioridade.
         cache_ttl: TTL do cache de schema (``get_database``), em segundos.
             ``0`` desabilita o cache.
+        jitter: Fração aleatória somada a cada espera (``0.25`` = até +25%),
+            para processos paralelos não repetirem no mesmo instante. ``0``
+            deixa as esperas exatas.
 
     Raises:
         NotionConfigurationError: Se nenhum token válido puder ser resolvido.
@@ -232,12 +307,16 @@ class NotionClient:
         max_retries: int = NOTION_MAX_RETRIES,
         backoff_base: float = NOTION_BACKOFF_BASE,
         cache_ttl: int = NOTION_SCHEMA_CACHE_TTL,
+        jitter: float = NOTION_JITTER,
     ) -> None:
         self._token = self._resolver_token(token)
         if max_retries < 0:
             raise ValueError("max_retries não pode ser negativo.")
         if backoff_base < 0:
             raise ValueError("backoff_base não pode ser negativo.")
+        if jitter < 0:
+            raise ValueError("jitter não pode ser negativo.")
+        self._jitter = jitter
         if cache_ttl < 0:
             raise ValueError("cache_ttl não pode ser negativo.")
 
@@ -303,10 +382,13 @@ class NotionClient:
         """Executa uma requisição JSON contra a API do Notion.
 
         Operações idempotentes são retentadas em erros transitórios e falhas de
-        rede, com backoff exponencial. Em criações, o retry fica restrito a
-        respostas 429/529, nas quais o Notion orienta aguardar e repetir; falhas
-        ambíguas de rede ou 5xx não são repetidas para evitar duplicatas.
-        Respostas com ``Retry-After`` têm prioridade.
+        rede, com backoff exponencial e jitter. Em criações, o retry fica
+        restrito a respostas 429/529, nas quais o Notion orienta aguardar e
+        repetir; falhas ambíguas de rede ou 5xx não são repetidas para evitar
+        duplicatas. Respostas com ``Retry-After`` têm prioridade. A regra toda
+        está em :func:`deve_retentar`: 429 "bloqueado" nunca se repete e 503
+        numa **escrita** também não — se o corpo disser que a escrita foi
+        salva, sobe :class:`~notion_starter.exceptions.NotionEscritaSalvaError`.
 
         Args:
             method: Método HTTP.
@@ -321,6 +403,7 @@ class NotionClient:
         Raises:
             NotionHTTPError: Se a API responder com 4xx/5xx após esgotadas
                 as retentativas.
+            NotionEscritaSalvaError: 503 numa escrita que o Notion salvou.
             NotionConnectionError: Em falha de rede ou timeout após esgotadas
                 as retentativas.
             NotionInvalidResponseError: Se a resposta não for JSON válido.
@@ -343,7 +426,7 @@ class NotionClient:
                 )
             except requests.RequestException as exc:
                 if idempotente and tentativa + 1 < total_tentativas:
-                    espera = self._backoff_base * (2**tentativa)
+                    espera = self._espera_exponencial(tentativa)
                     logger.warning(
                         "Retentativa %d/%d após erro de conexão",
                         tentativa + 1,
@@ -367,10 +450,25 @@ class NotionClient:
                         "A API do Notion retornou um JSON inválido."
                     ) from exc
 
-            pode_retentar = idempotente or (resp.status_code in NOTION_RATE_LIMIT_STATUS_CODES)
+            erro = NotionHTTPError(resp.status_code, resp.text)
             if (
-                pode_retentar
-                and resp.status_code in NOTION_RETRYABLE_STATUS_CODES
+                resp.status_code == 503
+                and not _eh_leitura(method, path)
+                and _escrita_foi_salva(erro.dados_adicionais)
+            ):
+                logger.error(
+                    "Escrita salva pelo Notion apesar do 503; não será repetida",
+                    extra={"path": path},
+                )
+                raise NotionEscritaSalvaError(resp.status_code, resp.text)
+            if (
+                deve_retentar(
+                    metodo=method,
+                    path=path,
+                    status_code=resp.status_code,
+                    idempotente=idempotente,
+                    dados_adicionais=erro.dados_adicionais,
+                )
                 and tentativa + 1 < total_tentativas
             ):
                 espera = self._calcular_espera(resp, tentativa)
@@ -388,7 +486,7 @@ class NotionClient:
                 "Erro HTTP do Notion",
                 extra={"status_code": resp.status_code, "path": path},
             )
-            raise NotionHTTPError(resp.status_code, resp.text)
+            raise erro
 
         raise RuntimeError("Fluxo de requisição terminou sem resposta.")
 
@@ -397,16 +495,26 @@ class NotionClient:
 
         Se a resposta contém o header ``Retry-After`` (comum em 429), usa esse
         valor. Caso contrário, usa backoff exponencial:
-        ``backoff_base * 2^tentativa``.
+        ``backoff_base * 2^tentativa`` (com teto). As duas levam jitter.
         """
 
         retry_after = resp.headers.get("Retry-After")
         if retry_after:
             try:
-                return max(float(retry_after), 0.0)
+                return self._com_jitter(max(float(retry_after), 0.0))
             except ValueError:
                 pass
-        return self._backoff_base * (2**tentativa)
+        return self._espera_exponencial(tentativa)
+
+    def _espera_exponencial(self, tentativa: int) -> float:
+        """``backoff_base * 2^tentativa``, com teto de 30 s e jitter."""
+
+        return self._com_jitter(min(self._backoff_base * (2**tentativa), NOTION_BACKOFF_MAXIMO))
+
+    def _com_jitter(self, espera: float) -> float:
+        if self._jitter <= 0 or espera <= 0:
+            return espera
+        return espera + random.uniform(0, espera * self._jitter)
 
     # -- Busca -------------------------------------------------------------
 
@@ -1223,7 +1331,8 @@ class NotionClient:
         passo de envio da File Upload API, que não é JSON: enquanto o envio
         não é concluído com sucesso, repeti-lo preserva o mesmo efeito, então
         erros transitórios (429/5xx e falhas de rede) são retentados com
-        backoff exponencial, respeitando ``Retry-After``.
+        backoff exponencial, respeitando ``Retry-After`` — pela mesma regra
+        de :func:`deve_retentar` (o envio é escrita: 503 não se repete).
 
         Args:
             path: Caminho relativo à URL base.
@@ -1254,7 +1363,7 @@ class NotionClient:
                 )
             except requests.RequestException as exc:
                 if tentativa + 1 < total_tentativas:
-                    espera = self._backoff_base * (2**tentativa)
+                    espera = self._espera_exponencial(tentativa)
                     logger.warning(
                         "Retentativa %d/%d após erro de conexão no upload",
                         tentativa + 1,
@@ -1272,8 +1381,17 @@ class NotionClient:
             if resp.status_code < 400:
                 return
 
+            erro = NotionHTTPError(resp.status_code, resp.text)
+            if resp.status_code == 503 and _escrita_foi_salva(erro.dados_adicionais):
+                raise NotionEscritaSalvaError(resp.status_code, resp.text)
             if (
-                resp.status_code in NOTION_RETRYABLE_STATUS_CODES
+                deve_retentar(
+                    metodo="POST",
+                    path=path,
+                    status_code=resp.status_code,
+                    idempotente=True,
+                    dados_adicionais=erro.dados_adicionais,
+                )
                 and tentativa + 1 < total_tentativas
             ):
                 espera = self._calcular_espera(resp, tentativa)
@@ -1291,7 +1409,7 @@ class NotionClient:
                 "Erro HTTP do Notion no upload",
                 extra={"status_code": resp.status_code, "path": path},
             )
-            raise NotionHTTPError(resp.status_code, resp.text)
+            raise erro
 
         raise RuntimeError("Fluxo de upload terminou sem resposta.")
 

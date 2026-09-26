@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
 
 class NotionSyncError(Exception):
     """Classe base para todas as falhas do ``notion_starter``."""
@@ -316,18 +319,72 @@ class TrechoAtravessaItensError(TrechoError):
         )
 
 
+def _corpo_do_erro(texto: str) -> tuple[str | None, dict[str, Any]]:
+    """``(code, additional_data)`` do corpo JSON de um erro da API, se houver."""
+
+    try:
+        corpo = json.loads(texto) if texto else None
+    except ValueError:
+        return None, {}
+    if not isinstance(corpo, dict):
+        return None, {}
+    codigo = corpo.get("code") if isinstance(corpo.get("code"), str) else None
+    dados = corpo.get("additional_data")
+    return codigo, dados if isinstance(dados, dict) else {}
+
+
 class NotionHTTPError(NotionAPIError):
     """Resposta HTTP de erro retornada pela API do Notion.
 
+    ``codigo`` e ``dados_adicionais`` são lidos do corpo **inteiro** antes de
+    ele ser truncado — ``additional_data`` (ex.: ``committed_child_ids`` de um
+    503) não cabe nos 500 caracteres guardados em ``body``.
+
     Args:
         status_code: Código HTTP retornado.
-        body: Corpo da resposta, truncado em até 500 caracteres.
+        body: Corpo da resposta; guardado truncado em até 500 caracteres.
+
+    Attributes:
+        codigo: O ``code`` do erro (ex.: ``validation_error``), se veio.
+        dados_adicionais: O ``additional_data`` do erro, se veio.
     """
 
     def __init__(self, status_code: int, body: str = "") -> None:
         self.status_code = status_code
         self.body = body[:500]
+        self.codigo, self.dados_adicionais = _corpo_do_erro(body)
         super().__init__(f"Notion HTTP {status_code}: {self.body}")
+
+
+class NotionEscritaSalvaError(NotionHTTPError):
+    """HTTP 503 numa escrita que o Notion **salvou** mas não conseguiu responder.
+
+    A documentação (https://developers.notion.com/reference/request-limits)
+    diz que uma escrita pode ser salva e ainda assim devolver 503, com
+    ``additional_data.retry_guidance`` pedindo para reler o objeto e **não
+    repetir** — repetir duplicaria o conteúdo. Esta exceção nunca é retentada.
+
+    Attributes:
+        recurso_id: ``committed_resource_id`` (página/database criado), se veio.
+        filhos_criados: ``committed_child_ids`` (blocos anexados), se vieram.
+    """
+
+    def __init__(self, status_code: int, body: str = "") -> None:
+        super().__init__(status_code, body)
+        recurso = self.dados_adicionais.get("committed_resource_id")
+        self.recurso_id = str(recurso) if recurso else None
+        filhos = self.dados_adicionais.get("committed_child_ids")
+        self.filhos_criados = [str(f) for f in filhos] if isinstance(filhos, list) else []
+        detalhes = []
+        if self.recurso_id:
+            detalhes.append(f"recurso criado: {self.recurso_id}")
+        if self.filhos_criados:
+            detalhes.append(f"blocos criados: {', '.join(self.filhos_criados)}")
+        extra = f" ({'; '.join(detalhes)})" if detalhes else ""
+        self.args = (
+            f"O Notion salvou a escrita, mas não respondeu a tempo (HTTP {status_code})"
+            f"{extra}. NÃO repita: releia o objeto para confirmar o que foi gravado.",
+        )
 
 
 class NotionConnectionError(NotionAPIError):

@@ -24,6 +24,13 @@ NOTION_MAX_RETRIES = 3
 #: Base do backoff exponencial entre retentativas, em segundos.
 NOTION_BACKOFF_BASE = 1.0
 
+#: Teto de uma espera de backoff exponencial, em segundos.
+NOTION_BACKOFF_MAXIMO = 30.0
+
+#: Jitter somado a cada espera, como fração dela (0.25 = até +25%): evita que
+#: vários processos repitam no mesmo instante depois de um 429.
+NOTION_JITTER = 0.25
+
 #: Rate limit e sobrecarga: o Notion confirma que a chamada deve ser repetida.
 NOTION_RATE_LIMIT_STATUS_CODES = frozenset({429, 529})
 

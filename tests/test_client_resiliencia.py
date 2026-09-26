@@ -31,13 +31,14 @@ def criar_client(
     backoff_base: float = 0.0,
     cache_ttl: int = 300,
 ) -> NotionClient:
-    """Cria um client com backoff zerado para os testes não esperarem."""
+    """Cria um client com backoff zerado e sem jitter (esperas exatas)."""
 
     return NotionClient(
         token=TOKEN,
         max_retries=max_retries,
         backoff_base=backoff_base,
         cache_ttl=cache_ttl,
+        jitter=0.0,
     )
 
 
