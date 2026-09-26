@@ -33,6 +33,7 @@ from .constants import (
     NOTION_VERSION,
 )
 from .exceptions import (
+    NotionAPIError,
     NotionConfigurationError,
     NotionConnectionError,
     NotionHTTPError,
@@ -1528,23 +1529,58 @@ class NotionClient:
         """Exclui (arquiva) um bloco do Notion.
 
         O Notion trata ``DELETE`` de bloco como arquivamento reversível: o bloco
-        sai da página, mas pode ser restaurado pela lixeira. É a operação
+        sai da página e ganha ``in_trash: true``; volta com
+        :meth:`restaurar_bloco` (é preciso guardar o ID). É a operação
         destrutiva de conteúdo — quem expõe (CLI/MCP) deve pedir confirmação.
+
+        **Idempotente de verdade:** o ``DELETE`` é retentado em falha de rede ou
+        5xx, e medido no workspace real o segundo ``DELETE`` de um bloco já
+        arquivado responde HTTP 400 ("Can't edit block that is archived"). Uma
+        exclusão que deu certo no servidor mas perdeu a resposta viraria erro e
+        abortaria no meio quem apaga em laço. Por isso, diante de um 400, o
+        bloco é relido: se já está na lixeira, o estado pedido foi alcançado e
+        o objeto lido é devolvido como sucesso. Consequência deliberada: apagar
+        um bloco que **já estava** na lixeira antes da chamada também é sucesso.
 
         Args:
             block_id: ID do bloco a excluir.
 
         Returns:
-            A resposta JSON do bloco arquivado.
+            A resposta JSON do bloco arquivado (ou, no caso acima, o bloco
+            relido, já com ``in_trash: true``).
 
         Raises:
             NotionConfigurationError: Se ``block_id`` for inválido.
-            NotionHTTPError: Se a API responder com 4xx/5xx.
+            NotionHTTPError: Se a API responder com 4xx/5xx e o bloco não
+                estiver na lixeira.
         """
 
         limpo = _validar_identificador(block_id, "block_id")
-        return self._request_json(
-            method="DELETE",
-            path=f"/blocks/{limpo}",
-            idempotente=True,
-        )
+        try:
+            return self._request_json(
+                method="DELETE",
+                path=f"/blocks/{limpo}",
+                idempotente=True,
+            )
+        except NotionHTTPError as erro:
+            if erro.status_code != 400:
+                raise
+            bloco = self._bloco_se_ja_arquivado(limpo)
+            if bloco is None:
+                raise
+            logger.warning(
+                "DELETE respondeu 400, mas o bloco já está na lixeira; tratado como sucesso",
+                extra={"block_id": limpo},
+            )
+            return bloco
+
+    def _bloco_se_ja_arquivado(self, block_id: str) -> dict[str, Any] | None:
+        """Relê o bloco e o devolve só se ele já estiver arquivado/na lixeira."""
+
+        try:
+            bloco = self.obter_bloco(block_id)
+        except NotionAPIError:
+            return None
+        if bloco.get("in_trash") or bloco.get("archived"):
+            return bloco
+        return None

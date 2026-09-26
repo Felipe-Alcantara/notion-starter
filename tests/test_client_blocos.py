@@ -10,14 +10,22 @@ from __future__ import annotations
 import json
 
 import pytest
+import requests
 import responses
 
 from notion_starter import NotionClient
 from notion_starter.constants import NOTION_BASE_URL
+from notion_starter.exceptions import NotionHTTPError
 
 TOKEN = "ntn_test_token"
 BLOCO = "bloco-1"
 PARAGRAFO = {"object": "block", "type": "paragraph", "paragraph": {"rich_text": []}}
+ARQUIVADO_400 = {
+    "object": "error",
+    "status": 400,
+    "code": "validation_error",
+    "message": "Can't edit block that is archived. You must unarchive the block before editing.",
+}
 
 
 def _cliente(max_retries: int = 0) -> NotionClient:
@@ -101,6 +109,87 @@ def test_restaurar_bloco_tira_da_lixeira_com_in_trash_false():
     _cliente().restaurar_bloco(BLOCO)
 
     assert _corpo() == {"in_trash": False}
+
+
+# -- excluir_bloco idempotente -----------------------------------------------
+
+
+def _registrar_get_do_bloco(*, in_trash: bool) -> None:
+    responses.add(
+        responses.GET,
+        f"{NOTION_BASE_URL}/blocks/{BLOCO}",
+        json={"id": BLOCO, "type": "paragraph", "in_trash": in_trash, "archived": in_trash},
+    )
+
+
+@responses.activate
+def test_delete_retentado_apos_timeout_nao_vira_erro():
+    """1º DELETE arquiva mas perde a resposta; o 2º recebe 400 'archived'."""
+
+    url = f"{NOTION_BASE_URL}/blocks/{BLOCO}"
+    responses.add(responses.DELETE, url, body=requests.exceptions.ReadTimeout("lento"))
+    responses.add(responses.DELETE, url, json=ARQUIVADO_400, status=400)
+    _registrar_get_do_bloco(in_trash=True)
+
+    resultado = _cliente(max_retries=2).excluir_bloco(BLOCO)
+
+    assert resultado["in_trash"] is True
+    metodos = [chamada.request.method for chamada in responses.calls]
+    assert metodos == ["DELETE", "DELETE", "GET"]
+
+
+@responses.activate
+def test_delete_retentado_apos_502_nao_vira_erro():
+    url = f"{NOTION_BASE_URL}/blocks/{BLOCO}"
+    responses.add(responses.DELETE, url, json={"message": "bad gateway"}, status=502)
+    responses.add(responses.DELETE, url, json=ARQUIVADO_400, status=400)
+    _registrar_get_do_bloco(in_trash=True)
+
+    resultado = _cliente(max_retries=2).excluir_bloco(BLOCO)
+
+    assert resultado["id"] == BLOCO
+
+
+@responses.activate
+def test_400_com_bloco_ainda_ativo_continua_erro():
+    """Se o bloco não está na lixeira, o 400 é um erro de verdade."""
+
+    responses.add(
+        responses.DELETE, f"{NOTION_BASE_URL}/blocks/{BLOCO}", json=ARQUIVADO_400, status=400
+    )
+    _registrar_get_do_bloco(in_trash=False)
+
+    with pytest.raises(NotionHTTPError) as erro:
+        _cliente().excluir_bloco(BLOCO)
+
+    assert erro.value.status_code == 400
+
+
+@responses.activate
+def test_400_com_bloco_ilegivel_continua_erro_original():
+    responses.add(
+        responses.DELETE, f"{NOTION_BASE_URL}/blocks/{BLOCO}", json=ARQUIVADO_400, status=400
+    )
+    responses.add(
+        responses.GET, f"{NOTION_BASE_URL}/blocks/{BLOCO}", json={"message": "x"}, status=404
+    )
+
+    with pytest.raises(NotionHTTPError) as erro:
+        _cliente().excluir_bloco(BLOCO)
+
+    assert erro.value.status_code == 400
+
+
+@responses.activate
+def test_404_no_delete_nao_rele_o_bloco():
+    responses.add(
+        responses.DELETE, f"{NOTION_BASE_URL}/blocks/{BLOCO}", json={"message": "x"}, status=404
+    )
+
+    with pytest.raises(NotionHTTPError):
+        _cliente().excluir_bloco(BLOCO)
+
+    assert [c.request.method for c in responses.calls] == ["DELETE"]
 
 
 # -- ler_propriedade ----------------------------------------------------------
