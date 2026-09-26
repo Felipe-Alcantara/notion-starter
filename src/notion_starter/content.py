@@ -792,7 +792,8 @@ def _marcadores_livres(linha: str) -> tuple[str, str]:
     texto, não se confundem com o que a pessoa escreveu.
     """
 
-    livres = (chr(c) for c in range(0xE000, 0xF900) if chr(c) not in linha)
+    faixas = (range(0xE000, 0xF900), range(0xF0000, 0xFFFFE))
+    livres = (chr(c) for faixa in faixas for c in faixa if chr(c) not in linha)
     return next(livres), next(livres)
 
 
