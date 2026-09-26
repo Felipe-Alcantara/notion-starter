@@ -417,9 +417,10 @@ def _casar_delimitadores(nos: list[dict[str, Any]]) -> list[tuple[int, int, str]
     """Casa as corridas de marcadores ("process emphasis" do CommonMark).
 
     Cada fechamento procura, para trás, a abertura mais próxima do mesmo
-    caractere; as corridas entre as duas viram texto. ``fundo`` guarda até onde
-    já não há abertura para cada tipo de fechamento, o que mantém a busca
-    linear numa linha com muitos marcadores sem par. Devolve ``(abertura,
+    caractere; as corridas entre as duas viram texto. ``fundo`` guarda, pelo
+    índice do nó (a posição na pilha muda quando ela perde itens), até onde já
+    não há abertura para cada tipo de fechamento, o que mantém a busca linear
+    numa linha com muitos marcadores sem par. Devolve ``(abertura,
     fechamento, anotação)`` com os índices em ``nos``.
     """
 
@@ -433,15 +434,16 @@ def _casar_delimitadores(nos: list[dict[str, Any]]) -> list[tuple[int, int, str]
             p += 1
             continue
         chave = (fecho["caractere"], fecho["abre"], fecho["tamanho"] % 3)
+        limite = fundo.get(chave, -1)
         q = p - 1
-        while q > fundo.get(chave, -1):
+        while q >= 0 and pilha[q] > limite:
             abertura = nos[pilha[q]]
             if abertura["caractere"] == fecho["caractere"] and abertura["abre"]:
                 if not _regra_do_tres_impede(abertura, fecho):
                     break
             q -= 1
         else:
-            fundo[chave] = p - 1
+            fundo[chave] = pilha[p - 1] if p > 0 else -1
             if fecho["abre"]:
                 p += 1
             else:

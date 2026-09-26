@@ -200,3 +200,17 @@ def test_leitura_junta_vizinhos_de_mesma_formatacao():
     markdown = blocos_para_markdown([bloco])
     assert markdown == "**Nota Agente:** fim"
     assert _formatados(markdown) == {"Nota Agente:": {"bold"}}
+
+
+
+@pytest.mark.parametrize(
+    ("markdown", "esperado"),
+    [
+        ("~~**ARQ-01**~~ → **Resolvido**: ok.", {"ARQ-01": {"bold", "strikethrough"},
+                                                 "Resolvido": {"bold"}}),
+        ("**a_** _b_", {"a_": {"bold"}, "b": {"italic"}}),
+        ("_a b* c_ *d*", {"a b* c": {"italic"}, "d": {"italic"}}),
+    ],
+)
+def test_abertura_nao_some_depois_que_a_pilha_perde_itens(markdown, esperado):
+    assert _formatados(markdown) == esperado
