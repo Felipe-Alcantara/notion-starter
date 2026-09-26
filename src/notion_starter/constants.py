@@ -41,3 +41,16 @@ NOTION_UPLOAD_MAX_BYTES = 20 * 1024 * 1024
 #: contado em unidades de código UTF-16. Texto maior precisa ser fatiado em vários
 #: itens, que o Notion concatena no mesmo campo.
 MAX_RICH_TEXT = 2000
+
+#: Limites de requisição documentados em
+#: https://developers.notion.com/reference/request-limits — qualquer array de
+#: blocos ou de rich text tem no máximo 100 elementos; URL de link, 2000
+#: caracteres; um payload, até 1000 elementos de bloco e 500 KB no total.
+MAX_ITENS_ARRAY = 100
+MAX_URL_LINK = 2000
+MAX_ELEMENTOS_POR_REQUISICAO = 1000
+MAX_BYTES_POR_REQUISICAO = 500_000
+
+#: Níveis de ``children`` aceitos numa única requisição de append
+#: (https://developers.notion.com/reference/patch-block-children).
+MAX_NIVEIS_ANINHADOS = 2

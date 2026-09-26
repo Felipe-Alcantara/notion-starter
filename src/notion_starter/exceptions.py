@@ -54,6 +54,29 @@ class RichTextNaoRegravavelError(NotionSyncError, ValueError):
         )
 
 
+class ConteudoInvalidoError(NotionSyncError, ValueError):
+    """O conteúdo a escrever passa de um limite documentado da API do Notion.
+
+    Levantada **antes de qualquer escrita** (e, numa substituição, antes de
+    apagar qualquer coisa): enviar daria HTTP 400 depois que o trabalho já
+    começou. Limites em https://developers.notion.com/reference/request-limits.
+
+    Attributes:
+        problemas: Uma descrição por violação encontrada (bloco e limite).
+    """
+
+    def __init__(self, problemas: list[str]) -> None:
+        self.problemas = list(problemas)
+        amostra = "; ".join(self.problemas[:5])
+        resto = len(self.problemas) - 5
+        if resto > 0:
+            amostra += f"; e mais {resto}"
+        super().__init__(
+            "O conteúdo passa dos limites da API do Notion e não foi enviado (nada foi "
+            f"alterado na página): {amostra}."
+        )
+
+
 class NotionHTTPError(NotionAPIError):
     """Resposta HTTP de erro retornada pela API do Notion.
 

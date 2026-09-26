@@ -32,6 +32,7 @@ from .constants import (
     NOTION_UPLOAD_MAX_BYTES,
     NOTION_VERSION,
 )
+from .content import planejar_lotes
 from .exceptions import (
     NotionAPIError,
     NotionConfigurationError,
@@ -893,9 +894,11 @@ class NotionClient:
         organizar conteúdo em subpáginas, como um README aninhado dentro da
         página de um projeto.
 
-        O Notion aceita no máximo 100 blocos por requisição; quando ``blocos``
-        excede esse limite, os primeiros 100 entram na criação e o restante é
-        anexado em lotes, de forma transparente para o chamador.
+        Cada requisição aceita no máximo 100 blocos de topo, 1000 elementos de
+        bloco (contando os filhos, como linhas de tabela) e 500 KB; o primeiro
+        lote que cabe entra na criação e o restante é anexado em lotes
+        (:func:`~notion_starter.content.planejar_lotes`), de forma transparente
+        para o chamador.
 
         Args:
             pagina_pai_id: ID da página que receberá a subpágina.
@@ -920,8 +923,9 @@ class NotionClient:
                 "title": [{"type": "text", "text": {"content": titulo_limpo}}]
             },
         }
-        if todos:
-            payload["children"] = todos[:100]
+        lotes = planejar_lotes(todos) if todos else []
+        if lotes:
+            payload["children"] = lotes[0]
 
         resposta = self._request_json(
             method="POST",
@@ -930,11 +934,10 @@ class NotionClient:
             idempotente=False,
         )
 
-        restante = todos[100:]
-        if restante:
+        if len(lotes) > 1:
             page_id = str(resposta.get("id") or "")
-            for inicio in range(0, len(restante), 100):
-                self.anexar_blocos(page_id, restante[inicio : inicio + 100])
+            for lote in lotes[1:]:
+                self.anexar_blocos(page_id, lote)
 
         return resposta
 

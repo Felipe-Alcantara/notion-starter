@@ -27,11 +27,19 @@ Exemplo:
 from __future__ import annotations
 
 import html as _html
+import json
 import re
 from typing import Any
 
-from .constants import MAX_RICH_TEXT
-from .exceptions import RichTextNaoRegravavelError
+from .constants import (
+    MAX_BYTES_POR_REQUISICAO,
+    MAX_ELEMENTOS_POR_REQUISICAO,
+    MAX_ITENS_ARRAY,
+    MAX_NIVEIS_ANINHADOS,
+    MAX_RICH_TEXT,
+    MAX_URL_LINK,
+)
+from .exceptions import ConteudoInvalidoError, RichTextNaoRegravavelError
 from .utils import fatiar_utf16
 
 # Tipos de bloco do Notion que carregam *rich text* num campo de mesmo nome.
@@ -146,7 +154,42 @@ def _rich_text(texto: str) -> list[dict[str, Any]]:
     itens: list[dict[str, Any]] = []
     for item in _parse_inline(texto):
         itens.extend(_fatiar_item(item))
+    if len(itens) > MAX_ITENS_ARRAY:
+        itens = [
+            fatia
+            for item in _fundir_adjacentes(_parse_inline(texto))
+            for fatia in _fatiar_item(item)
+        ]
     return itens
+
+
+def _mesma_formatacao(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Dois itens de texto com as mesmas anotações e o mesmo link."""
+
+    return (
+        a.get("type") == b.get("type") == "text"
+        and (a.get("annotations") or {}) == (b.get("annotations") or {})
+        and a["text"].get("link") == b["text"].get("link")
+    )
+
+
+def _fundir_adjacentes(itens: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Junta itens vizinhos de formatação idêntica num item só.
+
+    O Notion aceita no máximo 100 itens de *rich text* por bloco; o parser pode
+    gerar vizinhos iguais (ex.: um link recusado entre dois trechos simples).
+    Juntar não muda nada do que aparece e adia o limite — por isso só é
+    aplicado quando o texto passaria de 100 itens. O fatiamento de 2000
+    caracteres roda depois.
+    """
+
+    fundidos: list[dict[str, Any]] = []
+    for item in itens:
+        if fundidos and _mesma_formatacao(fundidos[-1], item):
+            fundidos[-1]["text"]["content"] += item["text"]["content"]
+        else:
+            fundidos.append(item)
+    return fundidos
 
 
 def _codigo_inline(texto: str) -> list[dict[str, Any]]:
@@ -339,9 +382,13 @@ def _tentar_link(
 
 
 def _url_valida(url: str) -> bool:
-    """Indica se a URL é aceita pelo Notion como link (http/https/mailto absolutos)."""
+    """Indica se a URL é aceita pelo Notion como link.
 
-    return url.startswith(("http://", "https://", "mailto:"))
+    Só http/https/mailto absolutos e com até 2000 caracteres (limite
+    documentado para ``text.link.url``); fora disso o texto fica sem link.
+    """
+
+    return url.startswith(("http://", "https://", "mailto:")) and len(url) <= MAX_URL_LINK
 
 
 def _aplicar_link(itens: list[dict[str, Any]], url: str, rotulo: str) -> None:
@@ -397,6 +444,28 @@ def _bloco(tipo: str, texto: str, extra: dict[str, Any] | None = None) -> dict[s
     if extra:
         corpo.update(extra)
     return {"object": "block", "type": tipo, tipo: corpo}
+
+
+def _blocos_de_codigo(texto: str, linguagem: str) -> list[dict[str, Any]]:
+    """Um ou mais blocos ``code`` para ``texto``.
+
+    Cada item de *rich text* leva até 2000 caracteres e cada bloco até 100
+    itens; código acima de ~200 mil caracteres não cabe num bloco só e é
+    dividido em blocos de código consecutivos, da mesma linguagem, em vez de
+    ser recusado pela API.
+    """
+
+    itens = _codigo_inline(texto)
+    if len(itens) <= MAX_ITENS_ARRAY:
+        return [_bloco("code", texto, {"language": linguagem})]
+    return [
+        {
+            "object": "block",
+            "type": "code",
+            "code": {"rich_text": itens[inicio : inicio + MAX_ITENS_ARRAY], "language": linguagem},
+        }
+        for inicio in range(0, len(itens), MAX_ITENS_ARRAY)
+    ]
 
 
 def _texto_de_bloco(bloco: dict[str, Any], *, formatado: bool = True) -> str:
@@ -613,9 +682,7 @@ def markdown_para_blocos(markdown: str) -> list[dict[str, Any]]:
                 corpo.append(linhas[i])
                 i += 1
             i += 1  # pula o fechamento ```
-            blocos.append(
-                _bloco("code", "\n".join(corpo), {"language": _normalizar_linguagem(lingua)})
-            )
+            blocos.extend(_blocos_de_codigo("\n".join(corpo), _normalizar_linguagem(lingua)))
             continue
 
         # Tabela: linha com | seguida de uma linha separadora (---|---).
@@ -830,3 +897,153 @@ def _tabela_para_markdown(bloco: dict[str, Any]) -> str:
         if indice == 0:
             linhas_md.append("| " + " | ".join(["---"] * largura) + " |")
     return "\n".join(linhas_md)
+
+
+# -- Limites da API: validação e divisão em lotes -------------------------------------
+
+
+def _unidades_utf16(texto: str) -> int:
+    return len(texto.encode("utf-16-le")) // 2
+
+
+def _filhos_de(bloco: dict[str, Any]) -> list[dict[str, Any]]:
+    """Filhos declarados no corpo do tipo (``bloco[tipo]["children"]``)."""
+
+    corpo = bloco.get(str(bloco.get("type") or ""))
+    filhos = corpo.get("children") if isinstance(corpo, dict) else None
+    return filhos if isinstance(filhos, list) else []
+
+
+def contar_elementos(bloco: dict[str, Any]) -> int:
+    """Quantos elementos de bloco ``bloco`` soma numa requisição (ele + descendentes)."""
+
+    return 1 + sum(contar_elementos(filho) for filho in _filhos_de(bloco))
+
+
+def _tamanho_json(dados: Any) -> int:
+    # ``requests`` serializa com ensure_ascii: estimar do mesmo jeito é o lado seguro.
+    return len(json.dumps(dados, ensure_ascii=True, separators=(",", ":")).encode("ascii"))
+
+
+def _validar_rich_text(itens: Any, onde: str, problemas: list[str]) -> None:
+    if not isinstance(itens, list):
+        return
+    if len(itens) > MAX_ITENS_ARRAY:
+        problemas.append(
+            f"{onde}: {len(itens)} trechos de texto formatado (máximo {MAX_ITENS_ARRAY}); "
+            "simplifique a formatação inline ou divida o texto"
+        )
+    for item in itens:
+        texto = item.get("text") if isinstance(item, dict) else None
+        if not isinstance(texto, dict):
+            continue
+        if _unidades_utf16(str(texto.get("content", ""))) > MAX_RICH_TEXT:
+            problemas.append(f"{onde}: trecho com mais de {MAX_RICH_TEXT} caracteres")
+        link = texto.get("link")
+        url = link.get("url") if isinstance(link, dict) else None
+        if isinstance(url, str) and len(url) > MAX_URL_LINK:
+            problemas.append(f"{onde}: link com mais de {MAX_URL_LINK} caracteres")
+
+
+def _validar_bloco(bloco: dict[str, Any], onde: str, nivel: int, problemas: list[str]) -> None:
+    tipo = str(bloco.get("type") or "")
+    corpo = bloco.get(tipo)
+    rotulo = f"{onde} ({tipo})"
+    if isinstance(corpo, dict):
+        _validar_rich_text(corpo.get("rich_text"), rotulo, problemas)
+        _validar_rich_text(corpo.get("caption"), f"{rotulo}, legenda", problemas)
+        celulas = corpo.get("cells")
+        if isinstance(celulas, list):
+            if len(celulas) > MAX_ITENS_ARRAY:
+                problemas.append(
+                    f"{rotulo}: {len(celulas)} colunas (máximo {MAX_ITENS_ARRAY})"
+                )
+            for coluna, celula in enumerate(celulas, start=1):
+                _validar_rich_text(celula, f"{rotulo}, coluna {coluna}", problemas)
+    filhos = _filhos_de(bloco)
+    if not filhos:
+        return
+    if nivel + 1 > MAX_NIVEIS_ANINHADOS:
+        problemas.append(
+            f"{rotulo}: aninhamento acima de {MAX_NIVEIS_ANINHADOS} níveis numa requisição"
+        )
+    if len(filhos) > MAX_ITENS_ARRAY:
+        rotulo_filhos = "linhas" if tipo == "table" else "filhos"
+        problemas.append(
+            f"{rotulo}: {len(filhos)} {rotulo_filhos} (máximo {MAX_ITENS_ARRAY}); "
+            "divida em partes menores"
+        )
+    for indice, filho in enumerate(filhos, start=1):
+        _validar_bloco(filho, f"{onde}.{indice}", nivel + 1, problemas)
+
+
+def validar_blocos(blocos: list[dict[str, Any]]) -> None:
+    """Confere, **sem rede**, se os blocos cabem nos limites documentados da API.
+
+    Percorre a árvore inteira: cada array de *rich text* (inclusive legendas e
+    células de tabela) com até 100 itens, cada trecho com até 2000 caracteres,
+    links com até 2000, ``children`` com até 100 elementos e até 2 níveis de
+    aninhamento, e cada bloco de topo cabendo sozinho numa requisição (1000
+    elementos, 500 KB). O número de blocos de topo não é limite aqui: quem
+    envia divide em lotes com :func:`planejar_lotes`.
+
+    Args:
+        blocos: Blocos no formato da API (ex.: saída de :func:`markdown_para_blocos`).
+
+    Raises:
+        ConteudoInvalidoError: Com a lista de cada violação encontrada.
+    """
+
+    problemas: list[str] = []
+    for indice, bloco in enumerate(blocos, start=1):
+        onde = f"bloco {indice}"
+        _validar_bloco(bloco, onde, 0, problemas)
+        if contar_elementos(bloco) > MAX_ELEMENTOS_POR_REQUISICAO:
+            problemas.append(
+                f"{onde}: {contar_elementos(bloco)} elementos (máximo "
+                f"{MAX_ELEMENTOS_POR_REQUISICAO} por requisição)"
+            )
+        if _tamanho_json(bloco) > MAX_BYTES_POR_REQUISICAO:
+            problemas.append(f"{onde}: mais de 500 KB sozinho")
+    if problemas:
+        raise ConteudoInvalidoError(problemas)
+
+
+def planejar_lotes(blocos: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Divide blocos de topo em lotes que cabem, cada um, numa requisição.
+
+    Cada lote fecha antes de passar de 100 blocos de topo, de 1000 elementos
+    de bloco (contando os descendentes em ``children``, como as linhas de uma
+    tabela) ou de ~500 KB de JSON — os três limites documentados. Dez
+    tabelas de 100 linhas, por exemplo, já não cabem num lote só.
+
+    Args:
+        blocos: Blocos já validados por :func:`validar_blocos`.
+
+    Returns:
+        Os lotes, na ordem original.
+    """
+
+    # Folga para o invólucro ``{"children": [...]}`` e o ``position``.
+    teto_bytes = MAX_BYTES_POR_REQUISICAO - 4_096
+    lotes: list[list[dict[str, Any]]] = []
+    atual: list[dict[str, Any]] = []
+    elementos = 0
+    tamanho = 0
+    for bloco in blocos:
+        peso = contar_elementos(bloco)
+        bytes_bloco = _tamanho_json(bloco) + 1
+        cabe = (
+            len(atual) < MAX_ITENS_ARRAY
+            and elementos + peso <= MAX_ELEMENTOS_POR_REQUISICAO
+            and tamanho + bytes_bloco <= teto_bytes
+        )
+        if atual and not cabe:
+            lotes.append(atual)
+            atual, elementos, tamanho = [], 0, 0
+        atual.append(bloco)
+        elementos += peso
+        tamanho += bytes_bloco
+    if atual:
+        lotes.append(atual)
+    return lotes
