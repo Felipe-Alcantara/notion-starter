@@ -151,11 +151,12 @@ Para outro tipo de coluna, passe um `montar_propriedade`, como
 
 ```bash
 # Instalação pública da biblioteca
-python -m pip install "notion-starter>=0.3.1,<0.4.0"
+python -m pip install "notion-starter>=0.4.0,<0.5.0"
 ```
 
-O release `0.3.1` está publicado no [PyPI](https://pypi.org/project/notion-starter/)
-como wheel e sdist. Ele não depende de checkout Git e não instala Django, React
+O release `0.4.0` será publicado no [PyPI](https://pypi.org/project/notion-starter/)
+como wheel e sdist; até lá, o PyPI serve `0.3.1`, que ainda não tem as APIs de
+escrita segura, IDs e exceções da auditoria de 2026-09-25. Ele não depende de checkout Git e não instala Django, React
 ou a CLI. Para operar o produto completo, use
 [`notion-automacoes[app]`](https://pypi.org/project/notion-automacoes/).
 

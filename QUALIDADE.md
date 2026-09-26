@@ -71,9 +71,13 @@ final com seu próprio lockfile quando precisarem de builds reproduzíveis.
 
 ## Distribuição
 
-O `pyproject.toml` é a fonte do pacote público `notion-starter` (`0.3.1`), com
-wheel e sdist validados por `twine check` e publicados no
-[PyPI](https://pypi.org/project/notion-starter/). O artefato não leva tokens,
+O `pyproject.toml` é a fonte do pacote público `notion-starter` (`0.4.0`, release
+pendente; o PyPI serve `0.3.1` até a tag `v0.4.0`), com wheel e sdist validados
+por `twine check` e publicados no
+[PyPI](https://pypi.org/project/notion-starter/). `__version__` e o
+`pyproject.toml` andam juntos (`tests/test_versao.py`). API pública nova sai em
+versão nova **antes** de um consumidor depender dela: o número publicado é o
+único contrato que a faixa de dependência da CLI e do app enxerga. O artefato não leva tokens,
 perfis locais ou banco SQLite. O consumidor que precisa do produto completo deve
 instalar a fachada `notion-automacoes[app]`, não adicionar dependências Git.
 

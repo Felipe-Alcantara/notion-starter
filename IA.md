@@ -601,3 +601,32 @@ não é conteúdo.
 primeira linha recuada; YAML com recuo e espaços no fim) falham com o código
 anterior e passam agora. Na API real, `ler-bloco` passou a mostrar os quatro
 espaços que o `GET` já tinha.
+
+### Release 0.4.0 preparado (a CLI não importava com o starter publicado)
+
+**O que a revisão achou (reproduzido).** Os commits da auditoria de 2026-09-25
+(`bd58ee9`…`484263c`) acrescentaram API pública (`EdicaoMultiblocoError`,
+`normalizar_id`, `chave_de_id`, `services.backups`, entre outras), mas a versão
+continuou `0.3.1`, que é também a versão já publicada no PyPI **sem** essas
+APIs. A CLI declara a faixa pelo número e passou a importar esses nomes no topo.
+Com o `0.3.1` do `origin/main` (`git archive`) na frente do `sys.path`,
+`python -m cli --help` falha com `ImportError: cannot import name
+'EdicaoMultiblocoError' from 'notion_starter.exceptions'`: nenhum comando abre.
+
+**Decisão.** Versão `0.4.0` (minor, não patch): além das APIs novas, há mudança
+de comportamento (`editar_bloco` recusa várias linhas, as exceções ganharam a
+base `NotionSyncError`, `arquivar_pagina` usa `in_trash`). As faixas `<0.4.0`
+dos consumidores continuam no `0.3.1` até cada um validar e abrir a faixa. O
+teste novo `tests/test_versao.py` amarra `__version__` ao `pyproject.toml`.
+
+**Ordem de publicação (nada foi publicado nesta execução; os commits são
+locais).** (1) push deste repositório e tag `v0.4.0`, que o `release.yml` leva
+ao PyPI; (2) só então a CLI, que agora exige `notion-starter>=0.4.0,<0.5.0` e
+cuja CI fica vermelha até o `0.4.0` existir no PyPI; (3) o
+`notion-workspace-app` precisa abrir a própria faixa para `<0.5.0` antes do
+próximo release da CLI, senão `notion-automacoes[app]` não resolve (a CLI exige
+`>=0.4.0` e o app `<0.4.0`).
+
+**Validação.** `ruff check .` limpo e `python -m pytest` verde (562 testes);
+o teste de versão falha se só um dos dois números subir (conferido trocando o
+`__version__` de volta para `0.3.1`).
