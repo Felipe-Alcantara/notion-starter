@@ -71,13 +71,41 @@ notion-starter/
 ## 🚀 Funcionalidades
 
 - **`NotionClient`** — cliente HTTP resiliente com retries, rate limit e erros
-  tipados; inclui `obter_pagina` e `atualizar_pagina` para propriedades.
+  tipados; inclui `obter_pagina` e `atualizar_pagina` para propriedades,
+  `obter_bloco`/`restaurar_bloco` para um bloco e `ler_itens_de_propriedade`
+  para relações com mais de 25 páginas. A regra de retry (`deve_retentar`) segue
+  a documentação: 429 bloqueado e 503 de escrita não se repetem, e uma escrita
+  que o Notion salvou apesar do 503 vira `NotionEscritaSalvaError` com os IDs
+  criados. `anexar_blocos` aceita `apos_bloco_id` ou `no_inicio`.
 - **Schema** — leitura e comparação de schemas de databases com
   `comparar_schema`.
 - **Tarefas** — modelos `Tarefa` e `TaskList` para criar, editar, mover e concluir
   tarefas; na criação, a coluna de título é descoberta pelo schema para também
   aceitar databases genéricos.
-- **Conteúdo** — leitura e escrita de blocos, incluindo conversão Markdown ↔ blocos.
+- **Conteúdo** — leitura e escrita de blocos, incluindo conversão Markdown ↔ blocos
+  (listas recuadas viram `children` e voltam recuadas na leitura). Escritas
+  destrutivas nunca apagam antes de o conteúdo novo estar gravado:
+  - `escrever_conteudo` valida os limites da API antes de tocar na página,
+    anexa em lotes (100 blocos, 1000 elementos, 500 KB) e só então apaga o
+    corpo antigo; aceita `apos_bloco_id`/`inicio` e devolve os IDs criados;
+  - `limpar_conteudo` só apaga o que o Markdown recria (`TIPOS_RECRIAVEIS`) e
+    preserva, com o motivo, o resto — inclusive blocos que **contêm** algo não
+    recriável; `restaurar_blocos` desfaz pelos IDs;
+  - `reordenacao.reordenar_bloco` cria a cópia antes de apagar o original,
+    recusa tipos fora da lista branca, blocos com filhos e subpáginas;
+  - `editar_bloco` recusa Markdown de vários blocos e, com `conferir_atual`,
+    mantém o tipo e recusa perder menção/cor/sublinhado; `trocar_trecho` troca
+    só um trecho preservando a formatação;
+  - `ler_bloco`, `listar_blocos(metadados=True)` e `apagar_bloco_verificado`
+    (que recusa subpágina/database sem pedido explícito).
+- **IDs** — `utils.normalizar_id` aceita UUID com ou sem hífens e links do
+  Notion (ignora `?v=`, usa `?p=` e, quando pedido, a âncora `#bloco`).
+- **Relações** — `services.relacoes.relacionar` liga os dois sentidos
+  conferindo a outra ponta, lê a lista inteira acima de 25 páginas e recusa
+  passar de 100.
+- **Ingestão de planilhas** — `FontePlanilha(chave="Coluna")` casa cada linha
+  pelo registro, não pela posição; sem chave, o título é conferido antes de
+  atualizar e divergências vão para `conflitos`. `ingerir(simular=True)` não grava.
 - **Propriedades** — builders `properties.*` para `title`, `rich_text`, `select`,
   `status`, `number`, `date`, `relation` e outros tipos; textos acima de 2.000
   unidades UTF-16 são fatiados automaticamente.
@@ -148,6 +176,26 @@ from notion_starter import NotionClient
 client = NotionClient()  # lê NOTION_TOKEN do ambiente
 ```
 
+### Escrever e editar conteúdo sem perder o que já existe
+
+```python
+from notion_starter.services import conteudo
+
+# Substitui o corpo recriável: valida, escreve o novo e só então apaga o antigo.
+resultado = conteudo.escrever_conteudo(page_id, "# Título\n\n- item", substituir=True,
+                                       cliente=client)
+print(resultado.criados, resultado.limpeza.apagados_ids, resultado.limpeza.motivos)
+
+# Troca só um trecho, preservando menções, cor e sublinhado do bloco.
+conteudo.trocar_trecho(bloco_id, "[20:12]", "[21:40]", cliente=client)
+
+# Desfaz uma limpeza pelos IDs (os blocos voltam no fim da página).
+conteudo.restaurar_blocos([bid for bid, _ in resultado.limpeza.apagados_ids], cliente=client)
+```
+
+Todas as recusas desses fluxos acontecem **antes** de qualquer escrita e
+derivam de `NotionSyncError` (as de entrada inválida também de `ValueError`).
+
 A pasta [`examples/`](examples/) contém scripts completos para listar páginas,
 exportar linhas, sincronizar CSV, gerar a árvore HTML do workspace, gerenciar
 tarefas e publicar relatórios diários a partir do histórico de um repositório
@@ -162,6 +210,7 @@ para conferir antes de escrever).
 | --- | --- |
 | `NOTION_TOKEN` | Token de integração interna do Notion (obrigatório) |
 | `NOTION_DATABASE_ID` | Database padrão de tarefas (opcional) |
+| `NOTION_AUTOMACOES_BACKUP_DIR` | Pasta dos backups em JSON do `reordenar_bloco` (opcional). Sem ela: `${XDG_STATE_HOME:-~/.local/state}/notion-automacoes/backups` ou `%LOCALAPPDATA%\notion-automacoes\backups` — nunca o diretório corrente |
 
 Use variáveis de ambiente ou um arquivo `.env` local baseado em `.env.example`.
 Nunca versione tokens ou IDs reais.

@@ -488,3 +488,88 @@ publicada de `listar_linhas` contém `propriedades`.
 #34166776357](https://github.com/Felipe-Alcantara/notion-tasks-cli/actions/runs/34166776357)
 passaram após a publicação. O problema original era exclusivamente a resolução
 do starter público anterior à implementação.
+
+---
+
+## [2026-09-25] Auditoria de perda de dados: escrever antes de apagar, lista branca e rastro para desfazer
+
+Uma auditoria da CLI contra o workspace real (numa subpágina-sandbox) achou
+vários caminhos em que uma operação **sumia com conteúdo** do usuário. A
+correção de biblioteca ficou aqui; a borda da CLI (flags, envelope JSON, os
+`except` das exceções novas) é o passo seguinte, no `notion-tasks-cli`.
+
+**O que estava errado (medido):**
+
+- `reordenar_bloco` apagava o original antes de recriar. Todo parágrafo sumia
+  (a cópia levava `paragraph.icon: null` e a API respondia 400); tabela, âncora
+  de outra página e falha de rede também; blocos com filhos eram recriados sem
+  eles; `child_page` "forçado" ia inteiro para a lixeira; e `--inicio` mandava
+  o bloco para o **fim** (sem `position` vale o padrão `end`). Os backups JSON
+  caíam no diretório corrente e chegaram a ser versionados.
+- `escrever --substituir` apagava o corpo e só depois recebia 400 por limite da
+  API (rich text > 100 itens, tabela > 100 linhas, lote > 1000 elementos): a
+  página ficava vazia, sem IDs para restaurar. A limpeza usava lista negra e só
+  olhava o topo: `equation`, `link_to_page`, sumário, e um toggle com database
+  ou imagem dentro iam para a lixeira.
+- `relacionar` regravava a relação lida de `GET /pages`, que corta em 25:
+  ligar a 27ª página apagava a 26ª.
+- `importar-planilha` usava a posição da linha como chave: inserir uma linha no
+  topo fazia a página da Ana passar a descrever a Aline.
+- `editar-bloco` gravava só a primeira de várias linhas e destruía menções,
+  sublinhado e cor; um DELETE retentado depois de timeout virava 400 e
+  abortava laços; o retry repetia escritas com 503 "Do not repeat the write".
+
+**Decisões:**
+
+- Ordem única nos fluxos destrutivos: validar sem rede → ler uma vez → gravar o
+  novo e conferir → só então apagar. Falha no meio desfaz o que foi criado e
+  levanta exceção com os IDs (`EscritaParcialError`, `LimpezaIncompletaError`,
+  `ReordenacaoIncompletaError`); `restaurar_blocos` desfaz pelos IDs
+  (medido: o bloco restaurado volta no **fim** do pai, não na posição antiga).
+- Lista branca em vez de lista negra: `TIPOS_RECRIAVEIS` na limpeza e
+  `_TIPOS_SEGUROS` + campos graváveis por tipo no reordenar. Toggle e callout
+  passam a ser **preservados** ao substituir (o motivo avisa que reescrever o
+  texto deles duplica). `TIPOS_NAO_RECRIAVEIS` continua exportado, agora
+  documental.
+- Compatibilidade antes de proteção onde o app não pode mudar agora:
+  `editar_bloco(conferir_atual=True)` e `databases_da_pagina(profundo=True)`
+  são opt-in (o MCP do app mantém o comportamento e o custo de antes);
+  `listar_blocos` só ganha chaves com `metadados`/`completo`; `excluir_bloco`
+  mantém o retorno cru e a conferência mora em `apagar_bloco_verificado`.
+  `forcar_tipos_arriscados` do reordenar ficou sem efeito (child_page é sempre
+  recusado).
+- Retry segue `request-limits`: `deve_retentar` é a regra única (inclusive do
+  upload); `NotionHTTPError` ganhou `codigo`/`dados_adicionais` lidos do corpo
+  inteiro; jitter proporcional e teto de 30 s.
+- `position` (`start`/`after_block`) vale na versão `2022-06-28` fixada (regra
+  de mudanças aditivas + medição); com posição, `results` traz também os irmãos
+  seguintes — os criados são `results[:len(lote)]`. `arquivar_pagina` passou a
+  `in_trash`, aceito na 2022-06-28; a troca global de `NOTION_VERSION` segue
+  fora (quebraria query de database, busca por `database` e `parent.database_id`).
+- Todas as exceções da biblioteca derivam de `NotionSyncError`, mantendo a
+  base antiga (`ValueError`/`RuntimeError`) como segunda.
+- `python-docx` só é importado na primeira renderização (a CLI pagava ~100 ms
+  de abertura em todo comando).
+
+**Validação:** 557 testes verdes e `ruff check .` limpo; cada teste de bug foi
+visto falhando com o código anterior (stash da correção). As suítes do
+`notion-tasks-cli` (259) e do `notion-workspace-app` (256, 2 pulados) passam
+contra esta versão sem alteração. Conferido na API real, numa subpágina-sandbox
+arquivada ao final: reordenar parágrafo com `--apos` e `--inicio`; recusa de
+item com filhos; recusa antes de apagar (119 trechos, tabela de 101 linhas);
+`apos_bloco_id` com 150 blocos na ordem certa; substituição preservando
+`equation` e item com imagem dentro; edição mantendo o tipo; recusa de perda
+de formatação; `trocar_trecho` preservando sublinhado, cor, menção de data,
+de página e de usuário; DELETE duplo sem erro; limpar + restaurar; leitura de
+bloco com pai; `apagar_bloco_verificado` recusando subpágina; `in_trash` em
+página. Relação acima de 25 foi validada só com *fake* (montar 26+ linhas
+relacionadas no workspace real ficou de fora nesta máquina).
+
+**Para quem continuar:** expor na CLI `escrever --apos/--inicio`, `trocar`,
+`ler-bloco`, `restaurar-bloco`, `blocos --metadados/--completo`,
+`importar-planilha --chave/--dry-run`, a flag de `apagar-bloco` para
+subpágina e os `except` das exceções novas (as que derivam só de
+`NotionSyncError` escapariam do tratamento atual). Recriar blocos com filhos no
+reordenar (em vez de recusar) e limpar células vazias na reimportação por chave
+são melhorias que o projeto ainda poderia receber. Nenhuma versão nova foi
+publicada; o release fica para a decisão do mantenedor.

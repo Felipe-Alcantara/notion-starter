@@ -26,6 +26,32 @@ Uma mudança está pronta quando:
 - README, `IA.md` e testes foram atualizados quando afetados;
 - riscos ou limitações restantes foram registrados.
 
+## Fluxos destrutivos
+
+Operações que apagam conteúdo do workspace seguem um contrato verificado por
+testes que falham sem a correção:
+
+- **validar antes de escrever** — tipo, filhos e limites documentados da API
+  (`content.validar_blocos`) são conferidos sem rede; a recusa acontece antes de
+  qualquer chamada de escrita;
+- **escrever antes de apagar** — o conteúdo novo (ou a cópia, no reordenar) é
+  gravado e confirmado antes de o antigo ir para a lixeira; se um lote falhar, o
+  que foi criado é desfeito;
+- **lista branca, não lista negra** — só se apaga/recria o que a biblioteca sabe
+  recriar; o resto é preservado com o motivo;
+- **rastro para desfazer** — os IDs apagados voltam no resultado e nas exceções
+  (`LimpezaIncompletaError`, `EscritaParcialError`, `ReordenacaoIncompletaError`),
+  e `restaurar_blocos` usa esses IDs;
+- **backups fora do diretório corrente** — ficam na pasta de estado do usuário,
+  só com permissão do dono, para nunca entrarem num repositório.
+
+Os *fakes* desses testes imitam a API real (ordem de filhos, `position`,
+`results` com os irmãos seguintes, 400 nos limites) e o comportamento foi
+conferido numa página-sandbox do workspace real antes do registro no `IA.md`.
+Todas as exceções da biblioteca derivam de `NotionSyncError`; as que antes
+herdavam de `ValueError`/`RuntimeError` mantêm essa base como segunda, para não
+quebrar os consumidores.
+
 ## Exceção motivada: versões mínimas
 
 O `pyproject.toml` usa limites mínimos (`>=`) nas dependências. Esta é uma
