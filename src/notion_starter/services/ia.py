@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from notion_starter import Tarefa, TaskList
+from notion_starter.exceptions import NotionSyncError
 from notion_starter.openrouter import ProvedorIA
 
 # ---------------------------------------------------------------------------
@@ -87,7 +88,7 @@ Se a frase não corresponder a nenhuma operação, responda:
 # ---------------------------------------------------------------------------
 
 
-class InterpretacaoErro(ValueError):
+class InterpretacaoErro(NotionSyncError, ValueError):
     """A resposta do provedor não pôde ser interpretada como ação válida."""
 
 

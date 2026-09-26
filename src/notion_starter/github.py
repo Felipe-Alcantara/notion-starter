@@ -14,6 +14,8 @@ from typing import Any
 
 import requests
 
+from .exceptions import NotionSyncError
+
 GITHUB_API_BASE = "https://api.github.com"
 GITHUB_TOKEN_ENV = "GITHUB_TOKEN"
 GITHUB_TIMEOUT = 15
@@ -122,7 +124,7 @@ def _inteiro_header(valor: str | None) -> int | None:
         return None
 
 
-class GitHubAPIError(Exception):
+class GitHubAPIError(NotionSyncError):
     """Falha previsível retornada pela API do GitHub."""
 
     def __init__(
@@ -138,7 +140,7 @@ class GitHubAPIError(Exception):
         super().__init__(f"GitHub HTTP {status_code}: {self.body}")
 
 
-class GitHubConnectionError(Exception):
+class GitHubConnectionError(NotionSyncError):
     """Falha de rede, timeout ou DNS após esgotar as retentativas."""
 
 

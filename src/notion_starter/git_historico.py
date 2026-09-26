@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from datetime import date as _date
 from pathlib import Path
 
+from .exceptions import NotionSyncError
+
 #: Separador improvável de aparecer em uma mensagem de commit.
 _CAMPO = "\x1f"
 _LINHA = "\x1e"
@@ -26,7 +28,7 @@ _LINHA = "\x1e"
 _TIMEOUT_SEGUNDOS = 120
 
 
-class GitIndisponivelError(RuntimeError):
+class GitIndisponivelError(NotionSyncError, RuntimeError):
     """O caminho não é um repositório git válido ou o binário não existe."""
 
 

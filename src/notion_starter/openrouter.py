@@ -23,6 +23,8 @@ from typing import Any, Protocol, runtime_checkable
 
 import requests as http
 
+from .exceptions import NotionSyncError
+
 # ---------------------------------------------------------------------------
 # Constantes
 # ---------------------------------------------------------------------------
@@ -41,11 +43,11 @@ _CACHE_TTL_SECONDS = 24 * 60 * 60  # 24 h
 # ---------------------------------------------------------------------------
 
 
-class CatalogoErro(RuntimeError):
+class CatalogoErro(NotionSyncError, RuntimeError):
     """Falha ao obter o catálogo de modelos (rede e cache indisponíveis)."""
 
 
-class ProvedorErro(RuntimeError):
+class ProvedorErro(NotionSyncError, RuntimeError):
     """Falha na chamada ao provedor de IA."""
 
 
