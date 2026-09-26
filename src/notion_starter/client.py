@@ -6,7 +6,7 @@ import json
 import os
 import time
 from copy import deepcopy
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlencode
 
 import requests
@@ -131,11 +131,41 @@ class PageArchivePayload(TypedDict):
     archived: bool
 
 
+class PosicaoInicioPayload(TypedDict):
+    """``position`` que insere os blocos no **início** da lista de filhos."""
+
+    type: Literal["start"]
+
+
+class AncoraBlocoPayload(TypedDict):
+    """Bloco irmão usado como âncora de ``position: after_block``."""
+
+    id: str
+
+
+class PosicaoAposBlocoPayload(TypedDict):
+    """``position`` que insere os blocos logo **depois** de um bloco irmão."""
+
+    type: Literal["after_block"]
+    after_block: AncoraBlocoPayload
+
+
+#: As posições que :meth:`NotionClient.anexar_blocos` sabe montar. A terceira
+#: (``{"type": "end"}``) é o padrão da API e corresponde a omitir ``position``.
+PosicaoAnexoPayload = PosicaoInicioPayload | PosicaoAposBlocoPayload
+
+
 class BlocksAppendPayload(TypedDict, total=False):
     """Payload para anexar blocos filhos a uma página ou bloco."""
 
     children: list[dict[str, object]]
-    position: dict[str, object]
+    position: PosicaoAnexoPayload
+
+
+class BlockRestorePayload(TypedDict):
+    """Payload que tira um bloco da lixeira (``in_trash: false``)."""
+
+    in_trash: bool
 
 
 class BlockArchivePayload(TypedDict):
@@ -927,6 +957,55 @@ class NotionClient:
             idempotente=True,
         )
 
+    def ler_propriedade(self, page_id: str, property_id: str) -> list[dict[str, Any]]:
+        """Lê o valor **completo** de uma propriedade, percorrendo a paginação.
+
+        ``GET /pages/{id}`` corta propriedades longas: numa ``relation`` vêm no
+        máximo 25 referências, com ``has_more: true`` avisando que há mais
+        (https://developers.notion.com/reference/page-property-values). O valor
+        inteiro só sai por ``GET /pages/{page_id}/properties/{property_id}``
+        (https://developers.notion.com/reference/retrieve-a-page-property),
+        lido página a página até ``has_more`` ser falso.
+
+        Args:
+            page_id: ID da página.
+            property_id: ID da propriedade **exatamente como a API o devolve**
+                no objeto da página (já codificado para URL, ex.: ``%3AAbc``);
+                não é codificado de novo aqui.
+
+        Returns:
+            Os *property items* na ordem da API. Propriedades paginadas
+            (relation, rich_text, title, people, rollup) devolvem um item por
+            elemento (ex.: ``{"type": "relation", "relation": {"id": ...}}``);
+            as demais, um item só.
+
+        Raises:
+            NotionConfigurationError: Se ``page_id`` ou ``property_id`` forem vazios.
+            NotionHTTPError: Se a API responder com 4xx/5xx.
+        """
+
+        pagina = _validar_identificador(page_id, "page_id")
+        propriedade = _validar_identificador(property_id, "property_id")
+        itens: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            params: dict[str, str] = {"page_size": "100"}
+            if cursor:
+                params["start_cursor"] = cursor
+            data = self._request_json(
+                method="GET",
+                path=f"/pages/{pagina}/properties/{propriedade}?{urlencode(params)}",
+                idempotente=True,
+            )
+            if data.get("object") != "list":
+                itens.append(data)
+                break
+            itens.extend(item for item in data.get("results", []) if isinstance(item, dict))
+            cursor = data.get("next_cursor")
+            if not data.get("has_more") or not cursor:
+                break
+        return itens
+
     def atualizar_pagina(
         self,
         page_id: str,
@@ -1292,31 +1371,59 @@ class NotionClient:
         blocos: list[dict[str, object]],
         *,
         apos_bloco_id: str | None = None,
+        no_inicio: bool = False,
     ) -> dict[str, Any]:
         """Anexa blocos filhos a uma página ou bloco.
 
+        Sem posição, os blocos entram no **fim** da lista de filhos (o padrão
+        ``{"type": "end"}`` da API). O parâmetro ``position`` do endpoint
+        (https://developers.notion.com/reference/patch-block-children) aceita
+        ``start``, ``end`` e ``after_block``; o antigo ``after`` está
+        *deprecated* e foi removido na versão ``2026-03-11`` — por isso nunca é
+        usado aqui. Pela política de versionamento do Notion
+        (https://developers.notion.com/reference/versioning), parâmetros
+        opcionais novos valem para todas as versões, inclusive a ``2022-06-28``
+        fixada neste cliente; isso foi conferido no workspace real em
+        2026-09-25 (``start`` e ``after_block`` respeitados; ``type`` inválido
+        recusado com a lista ``after_block``/``start``/``end``).
+
+        **Resposta com posição:** a documentação diz que a resposta traz "os
+        filhos de primeiro nível recém-criados", mas medido em 2026-09-25 (nas
+        versões 2022-06-28 e 2025-09-03), quando há ``position`` a lista
+        ``results`` traz os blocos novos **seguidos de todos os irmãos
+        posteriores**. Quem precisa só dos criados deve usar
+        ``results[:len(blocos)]``.
+
         Args:
             block_id: ID da página ou do bloco pai.
-            blocos: Lista de blocos no formato da API do Notion.
+            blocos: Lista de blocos no formato da API do Notion (no máximo 100,
+                com até dois níveis de ``children`` aninhados por requisição).
             apos_bloco_id: Quando informado, insere os novos blocos logo após
-                este bloco irmão (``position: after_block`` da API) em vez de
-                no final da lista de filhos.
+                este bloco irmão (``position: after_block``).
+            no_inicio: Quando verdadeiro, insere os novos blocos no **início**
+                da lista de filhos (``position: start``). Exclusivo com
+                ``apos_bloco_id``.
 
         Returns:
-            A resposta JSON da API (os blocos criados).
+            A resposta JSON da API (ver a nota sobre ``results`` com posição).
 
         Raises:
             NotionConfigurationError: Se ``block_id`` for inválido.
-            ValueError: Se ``blocos`` estiver vazio.
+            ValueError: Se ``blocos`` estiver vazio, ou se ``no_inicio`` e
+                ``apos_bloco_id`` vierem juntos.
             NotionHTTPError: Se a API responder com 4xx/5xx.
         """
 
         limpo = _validar_identificador(block_id, "block_id")
         if not blocos:
             raise ValueError("Informe ao menos um bloco para anexar.")
+        if no_inicio and apos_bloco_id:
+            raise ValueError("Use no_inicio ou apos_bloco_id, não os dois ao mesmo tempo.")
 
         payload: BlocksAppendPayload = {"children": blocos}
-        if apos_bloco_id:
+        if no_inicio:
+            payload["position"] = {"type": "start"}
+        elif apos_bloco_id:
             payload["position"] = {
                 "type": "after_block",
                 "after_block": {"id": _validar_identificador(apos_bloco_id, "apos_bloco_id")},
@@ -1357,6 +1464,63 @@ class NotionClient:
             method="PATCH",
             path=f"/blocks/{limpo}",
             payload=dict(conteudo),
+            idempotente=True,
+        )
+
+    def obter_bloco(self, block_id: str) -> dict[str, Any]:
+        """Lê **um** bloco pelo ID (``GET /v1/blocks/{block_id}``).
+
+        Devolve o objeto do bloco com ``type``, o corpo do tipo, ``has_children``,
+        ``in_trash``, ``parent`` e os carimbos de criação/edição — mas **não**
+        os filhos: quando ``has_children`` é verdadeiro, eles se leem com
+        :meth:`ler_blocos` (https://developers.notion.com/reference/retrieve-a-block).
+
+        Args:
+            block_id: ID do bloco.
+
+        Returns:
+            O objeto JSON do bloco.
+
+        Raises:
+            NotionConfigurationError: Se ``block_id`` for inválido.
+            NotionHTTPError: Se a API responder com 4xx/5xx.
+        """
+
+        limpo = _validar_identificador(block_id, "block_id")
+        return self._request_json(
+            method="GET",
+            path=f"/blocks/{limpo}",
+            idempotente=True,
+        )
+
+    def restaurar_bloco(self, block_id: str) -> dict[str, Any]:
+        """Tira um bloco da lixeira (``PATCH /v1/blocks/{id}`` com ``in_trash: false``).
+
+        É o caminho documentado para desfazer :meth:`excluir_bloco`
+        (https://developers.notion.com/reference/delete-a-block: "To restore
+        the block with the API, use the Update a block"). ``in_trash`` é o campo
+        que a referência de Update a block lista; medido em 2026-09-26 que a
+        versão 2022-06-28 fixada aqui também o aceita. O bloco volta com o
+        mesmo ID e os filhos, mas **não** na posição original: no mesmo teste
+        ele reapareceu no **fim** da lista de filhos do pai.
+
+        Args:
+            block_id: ID do bloco arquivado.
+
+        Returns:
+            A resposta JSON do bloco restaurado.
+
+        Raises:
+            NotionConfigurationError: Se ``block_id`` for inválido.
+            NotionHTTPError: Se a API responder com 4xx/5xx.
+        """
+
+        limpo = _validar_identificador(block_id, "block_id")
+        payload: BlockRestorePayload = {"in_trash": False}
+        return self._request_json(
+            method="PATCH",
+            path=f"/blocks/{limpo}",
+            payload=dict(payload),
             idempotente=True,
         )
 
