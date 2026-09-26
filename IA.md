@@ -551,7 +551,7 @@ correção de biblioteca ficou aqui; a borda da CLI (flags, envelope JSON, os
 - `python-docx` só é importado na primeira renderização (a CLI pagava ~100 ms
   de abertura em todo comando).
 
-**Validação:** 557 testes verdes e `ruff check .` limpo; cada teste de bug foi
+**Validação:** 559 testes verdes e `ruff check .` limpo; cada teste de bug foi
 visto falhando com o código anterior (stash da correção). As suítes do
 `notion-tasks-cli` (259) e do `notion-workspace-app` (256, 2 pulados) passam
 contra esta versão sem alteração. Conferido na API real, numa subpágina-sandbox
@@ -566,7 +566,8 @@ página. Relação acima de 25 foi validada só com *fake* (montar 26+ linhas
 relacionadas no workspace real ficou de fora nesta máquina).
 
 **Para quem continuar:** expor na CLI `escrever --apos/--inicio`, `trocar`,
-`ler-bloco`, `restaurar-bloco`, `blocos --metadados/--completo`,
+`ler-bloco`, `restaurar-bloco`,
+`blocos --metadados/--completo/--recursivo/--contendo`,
 `importar-planilha --chave/--dry-run`, a flag de `apagar-bloco` para
 subpágina e os `except` das exceções novas (as que derivam só de
 `NotionSyncError` escapariam do tratamento atual). Recriar blocos com filhos no

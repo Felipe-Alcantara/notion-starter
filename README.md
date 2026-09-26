@@ -96,8 +96,9 @@ notion-starter/
   - `editar_bloco` recusa Markdown de vários blocos e, com `conferir_atual`,
     mantém o tipo e recusa perder menção/cor/sublinhado; `trocar_trecho` troca
     só um trecho preservando a formatação;
-  - `ler_bloco`, `listar_blocos(metadados=True)` e `apagar_bloco_verificado`
-    (que recusa subpágina/database sem pedido explícito).
+  - `ler_bloco`, `listar_blocos(metadados=True, recursivo=True, contendo=...)`
+    e `apagar_bloco_verificado` (que recusa subpágina/database sem pedido
+    explícito).
 - **IDs** — `utils.normalizar_id` aceita UUID com ou sem hífens e links do
   Notion (ignora `?v=`, usa `?p=` e, quando pedido, a âncora `#bloco`).
 - **Relações** — `services.relacoes.relacionar` liga os dois sentidos
