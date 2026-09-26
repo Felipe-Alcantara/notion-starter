@@ -77,6 +77,105 @@ class ConteudoInvalidoError(NotionSyncError, ValueError):
         )
 
 
+class EscritaParcialError(NotionSyncError, RuntimeError):
+    """Uma escrita em lotes falhou depois de começar.
+
+    O serviço tenta **desfazer** o que já tinha criado (apaga os blocos novos
+    cujos IDs conhece), para que repetir o comando não duplique conteúdo. O que
+    não pôde ser desfeito fica listado. Deriva também de ``RuntimeError``, o
+    tipo que a escrita parcial levantava antes.
+
+    Attributes:
+        page_id: Página (ou bloco) que recebia a escrita.
+        total: Blocos de topo que seriam escritos.
+        criados: ``(id, tipo)`` dos blocos novos que **continuam** na página.
+        desfeitos: IDs dos blocos novos que foram apagados de novo.
+        lote_incerto: A falha foi de rede ou 5xx num lote: ele pode ter sido
+            gravado sem que os IDs chegassem aqui — confira antes de repetir.
+        substituicao: Era uma substituição: nada do conteúdo antigo foi apagado.
+        causa: A exceção original, quando houver.
+    """
+
+    def __init__(
+        self,
+        *,
+        page_id: str,
+        total: int,
+        criados: list[tuple[str, str]],
+        desfeitos: list[str],
+        lote_incerto: bool,
+        substituicao: bool,
+        causa: BaseException | None,
+        detalhe: str = "",
+    ) -> None:
+        self.page_id = page_id
+        self.total = total
+        self.criados = list(criados)
+        self.desfeitos = list(desfeitos)
+        self.lote_incerto = lote_incerto
+        self.substituicao = substituicao
+        self.causa = causa
+        partes = [f"Escrita parcial em {page_id}: a escrita de {total} blocos falhou"]
+        motivo = detalhe or (str(causa) if causa is not None else "")
+        if motivo:
+            partes[0] += f" ({motivo})"
+        partes[0] += "."
+        if self.desfeitos:
+            partes.append(
+                f"Os {len(self.desfeitos)} blocos já criados foram removidos de novo."
+            )
+        if self.criados:
+            ids = ", ".join(bloco_id for bloco_id, _ in self.criados)
+            partes.append(f"Ficaram na página {len(self.criados)} blocos novos: {ids}.")
+        if lote_incerto:
+            partes.append(
+                f"O último lote pode ter sido gravado mesmo assim (a resposta se perdeu): "
+                f"confira com 'blocos {page_id}' antes de repetir."
+            )
+        if substituicao:
+            partes.append("Nada do conteúdo antigo foi apagado.")
+        super().__init__(" ".join(partes))
+
+
+class LimpezaIncompletaError(NotionSyncError):
+    """Apagar os blocos de uma página falhou no meio.
+
+    Carrega o que já foi para a lixeira (com os IDs, que é o que permite
+    restaurar — ``restaurar_bloco``) e o que ficou. Numa substituição, a
+    limpeza roda **depois** de escrever o conteúdo novo, então ``blocos_novos``
+    lista o que já foi escrito.
+
+    Attributes:
+        apagados: ``(id, tipo)`` de cada bloco já arquivado.
+        pendentes: ``(id, tipo)`` de cada bloco que ainda devia ser apagado.
+        blocos_novos: IDs do conteúdo novo já escrito (substituição).
+        causa: A exceção original.
+    """
+
+    def __init__(
+        self,
+        *,
+        apagados: list[tuple[str, str]],
+        pendentes: list[tuple[str, str]],
+        causa: BaseException | None,
+        blocos_novos: list[str] | None = None,
+    ) -> None:
+        self.apagados = list(apagados)
+        self.pendentes = list(pendentes)
+        self.blocos_novos = list(blocos_novos or [])
+        self.causa = causa
+        apagados_txt = ", ".join(bloco_id for bloco_id, _ in self.apagados) or "nenhum"
+        pendentes_txt = ", ".join(bloco_id for bloco_id, _ in self.pendentes) or "nenhum"
+        mensagem = (
+            f"A limpeza parou no meio ({causa}). Já na lixeira: {apagados_txt}. Ainda na "
+            f"página: {pendentes_txt}. Para desfazer, restaure os IDs apagados com "
+            "restaurar_bloco (voltam no fim da página); para concluir, repita a operação."
+        )
+        if self.blocos_novos:
+            mensagem += f" O conteúdo novo já foi escrito ({len(self.blocos_novos)} blocos)."
+        super().__init__(mensagem)
+
+
 class NotionHTTPError(NotionAPIError):
     """Resposta HTTP de erro retornada pela API do Notion.
 
