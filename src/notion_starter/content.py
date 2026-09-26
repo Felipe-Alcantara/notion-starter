@@ -429,6 +429,13 @@ def _tentar_enfase(
         interior = texto[i + len(marcador) : fim]
         if not interior:
             continue
+        if anotacao != "code":
+            if not _pode_abrir(texto, i, marcador):
+                continue
+            fim = _achar_fechamento(texto, fim, marcador)
+            if fim == -1:
+                continue
+            interior = texto[i + len(marcador) : fim]
         descarregar()
         if anotacao == "code":
             itens.append(_item_texto(interior, annotations={**annotations, "code": True}))
@@ -436,6 +443,64 @@ def _tentar_enfase(
             _parse_inline_em(interior, {**annotations, anotacao: True}, itens)
         return fim + len(marcador)
     return 0
+
+
+# Flanqueamento simplificado do CommonMark: cobre o que corrompia texto real
+# (``snake_case``, ``2 * 3``) sem a regra de pontuação, que quebraria a ida e
+# volta de trechos formatados colados em pontuação (``a**(x)**b``, texto CJK).
+
+
+def _vizinhos_da_corrida(texto: str, i: int, caractere: str) -> tuple[str, str]:
+    """Os caracteres logo antes e logo depois da corrida de ``caractere`` em ``i``.
+
+    O CommonMark decide pela corrida inteira (``***``), não por um marcador
+    isolado dentro dela. Início ou fim da linha contam como espaço (``""``).
+    """
+
+    inicio = i
+    while inicio > 0 and texto[inicio - 1] == caractere:
+        inicio -= 1
+    fim = i
+    while fim < len(texto) and texto[fim] == caractere:
+        fim += 1
+    antes = texto[inicio - 1] if inicio > 0 else ""
+    depois = texto[fim] if fim < len(texto) else ""
+    return antes, depois
+
+
+def _pode_abrir(texto: str, i: int, marcador: str) -> bool:
+    """O marcador em ``i`` abre ênfase: não vem antes de espaço; ``_`` não cola em palavra."""
+
+    antes, depois = _vizinhos_da_corrida(texto, i, marcador[0])
+    if not depois or depois.isspace():
+        return False
+    return not (marcador[0] == "_" and antes.isalnum())
+
+
+def _pode_fechar(texto: str, i: int, marcador: str) -> bool:
+    """O marcador em ``i`` fecha ênfase: não vem depois de espaço; ``_`` não cola em palavra."""
+
+    antes, depois = _vizinhos_da_corrida(texto, i, marcador[0])
+    if not antes or antes.isspace():
+        return False
+    return not (marcador[0] == "_" and depois.isalnum())
+
+
+def _achar_fechamento(texto: str, fim: int, marcador: str) -> int:
+    """A partir da ocorrência ``fim``, a primeira que pode fechar, ou ``-1``.
+
+    Pula a corrida inteira quando ela não fecha, para uma sequência longa de
+    marcadores continuar linear.
+    """
+
+    while fim != -1:
+        if _pode_fechar(texto, fim, marcador):
+            return fim
+        proxima = fim
+        while proxima < len(texto) and texto[proxima] == marcador[0]:
+            proxima += 1
+        fim = texto.find(marcador, proxima)
+    return -1
 
 
 def _bloco(tipo: str, texto: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -519,13 +584,19 @@ def _item_para_markdown(item: dict[str, Any]) -> str:
     anot = item.get("annotations", {}) or {}
     if anot.get("code"):
         texto = f"`{texto}`"
-    else:
+    elif texto.strip():
+        # O espaço da ponta fica fora dos marcadores: "**Nota:** " relê como
+        # negrito, "**Nota: **" não fecha (marcador depois de espaço).
+        miolo = texto.strip()
+        inicio = texto[: len(texto) - len(texto.lstrip())]
+        fim = texto[len(texto.rstrip()) :]
         if anot.get("bold"):
-            texto = f"**{texto}**"
+            miolo = f"**{miolo}**"
         if anot.get("italic"):
-            texto = f"*{texto}*"
+            miolo = f"*{miolo}*"
         if anot.get("strikethrough"):
-            texto = f"~~{texto}~~"
+            miolo = f"~~{miolo}~~"
+        texto = f"{inicio}{miolo}{fim}"
     link = item.get("text", {}).get("link") or item.get("href")
     if isinstance(link, dict):
         link = link.get("url")
