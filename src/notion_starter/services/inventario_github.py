@@ -335,7 +335,9 @@ def _localizar_subpaginas_readme(cliente: NotionClient, page_id: str) -> list[st
     """
 
     ids: list[str] = []
-    for bloco in cliente.ler_blocos(page_id):
+    # Toda a paginação: um README depois do 100º bloco de topo ficava invisível,
+    # não era apagado e a sincronização criava outro (a duplicata que isto evita).
+    for bloco in cliente.ler_blocos(page_id, buscar_todos=True):
         if bloco.get("type") != "child_page":
             continue
         if bloco.get("child_page", {}).get("title", "") == TITULO_README:
