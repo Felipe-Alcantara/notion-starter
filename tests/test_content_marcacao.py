@@ -232,3 +232,12 @@ def test_destino_de_link_entre_sinais_ou_com_parenteses(markdown, rotulo, url):
     assert [i["text"]["content"] for i in link] == [rotulo]
     assert link[0]["text"]["link"] == {"url": url}
     assert "".join(i["text"]["content"] for i in itens) == f"veja {rotulo} aqui"
+
+
+
+def test_comentario_html_sem_fechamento_e_linear_e_fica_como_texto():
+    for texto in ("<!--" * 12500, "<!-- nota " * 5000):
+        inicio = time.perf_counter()
+        assert _texto(texto) == texto.strip()
+        assert time.perf_counter() - inicio < 1.0
+    assert _texto("antes <!-- nota --> depois") == "antes  depois"

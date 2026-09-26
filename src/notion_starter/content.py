@@ -712,7 +712,6 @@ _ELEMENTOS_HTML = frozenset(
     "slot small source span strike strong style sub summary sup table tbody td "
     "template textarea tfoot th thead time title tr track tt u ul var video wbr".split()
 )
-_RE_COMENTARIO_HTML = re.compile(r"<!--.*?-->", re.S)
 # Autolink solto; logo depois de "](" é destino de link em <...>, não autolink.
 _RE_AUTOLINK = re.compile(r"(?<!\]\()<((?:https?|mailto):[^\s<>]+)>", re.I)
 # Entidade só com ";" final, como no CommonMark: "&copy=1" numa URL fica intacto.
@@ -756,7 +755,7 @@ def _limpar_html(linha: str) -> str:
     linha = _RE_IMG_HTML.sub(lambda m: f"![]({m.group(1).strip()})", linha)
     linha = re.sub(r"<br\s*/?>", " ", linha, flags=re.I)
     linha = _RE_AUTOLINK.sub(lambda m: f"[{m.group(1)}]({m.group(1)})", linha)
-    linha = _RE_COMENTARIO_HTML.sub("", linha)
+    linha = _sem_comentarios_html(linha)
     linha = _RE_TAG.sub(_remover_elemento_html, linha)
     # A entidade só é decodificada fora do código, depois de separar os trechos:
     # uma entidade que vire um dos marcadores não é confundida com código.
@@ -765,6 +764,25 @@ def _limpar_html(linha: str) -> str:
         codigos[int(parte)] if k % 2 else _RE_ENTIDADE.sub(_decodificar_entidade, parte)
         for k, parte in enumerate(partes)
     ).strip()
+
+
+def _sem_comentarios_html(linha: str) -> str:
+    """Tira os comentários ``<!-- ... -->``; um ``<!--`` sem fechamento fica.
+
+    Laço com ``find`` em vez de regex: muitos ``<!--`` sem fechamento numa
+    linha longa deixavam a regex quadrática.
+    """
+
+    partes: list[str] = []
+    pos = 0
+    while (inicio := linha.find("<!--", pos)) != -1:
+        fim = linha.find("-->", inicio + 4)
+        if fim == -1:
+            break
+        partes.append(linha[pos:inicio])
+        pos = fim + 3
+    partes.append(linha[pos:])
+    return "".join(partes)
 
 
 def _marcadores_livres(linha: str) -> tuple[str, str]:
