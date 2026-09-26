@@ -758,3 +758,46 @@ pontuação (como `*1**(`), em que só a regra de pontuação, deixada de fora d
 propósito, mudaria o resultado; nas linhas reais foram zero. Markdown gerado
 pelo leitor da 0.4.0 com espaço dentro do marcador (`**Nota: **`) não vira
 mais negrito: basta reler a página com a 0.4.1.
+
+---
+
+## [2026-09-26] Segunda revisão adversarial da 0.4.1: pilha de delimitadores, destino de link e comentário HTML
+
+Registro gravado em 2026-09-26 às 14:27 (-03), antes da publicação.
+
+**O que a segunda revisão achou (2 lentes, um cético por achado): 3
+problemas confirmados, 1 refutado.**
+
+- **Aberturas somiam depois que a pilha perdia itens.** O `fundo`
+  ("openers_bottom") guardava a posição na lista de delimitadores, e os pares
+  casados removiam itens abaixo dela. Em `~~**ARQ-01**~~ → **Resolvido**:`
+  (`docs/AUDITORIA-2026-08-08.md`, linhas 331 e 334, do Felixo AI Core) o
+  negrito de "Resolvido" sumia; a 0.4.0 acertava. O defeito foi confirmado
+  pelas duas lentes. Agora o `fundo` guarda o índice do nó.
+- **Destino de link entre `<…>`.** Em `[RSA](<https://…_(sistema)>)`
+  (sintaxe válida do CommonMark), a conversão de autolink pegava o destino, e a
+  URL vazava para o texto. Agora:
+  - o autolink não conta logo depois de `](`;
+  - o leitor de link aceita `<destino>`;
+  - o destino comum aceita parênteses balanceados.
+- **Comentário HTML sem fechamento.** A regex `<!--.*?-->`, nova nesta versão,
+  ficava quadrática: 5,7 s numa linha de 50 KB, contra 0,66 s na 0.4.0. Foi
+  trocada por um laço com `find`.
+- **Refutado como bloqueante, corrigido assim mesmo.** Uma linha com todos os
+  6.399 caracteres de uso privado do BMP deixava os marcadores internos sem
+  opção. A busca agora continua no plano 15.
+
+**Validação.**
+
+- 610 testes verdes e `ruff` limpo. Os 7 testes novos falham no commit
+  anterior.
+- A referência independente escrita pelo revisor (`ref_casar`, mesmo
+  flanqueamento e `fundo` por nó) bate com o código final em 200.000 de
+  200.000 entradas aleatórias.
+- **Corpus real** de 10.128 linhas: 9.997 iguais ao markdown-it, sem nenhuma
+  linha pior que na 0.4.0 ou na versão anterior.
+- **Sintético:** ida e volta fiel em 3.102 de 4.000 (1.684 na 0.4.0).
+- **Desempenho:** linhas de 50 KB de `*a `, `a* `, `*a* ` e `*_~~` em até
+  0,43 s.
+- **Consumidores:** `notion-tasks-cli` 333/333 e `notion-workspace-app`
+  279/279 com esta versão, os mesmos números da 0.4.0.
