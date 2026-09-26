@@ -185,3 +185,11 @@ def test_autolink_vira_link_com_a_propria_url():
     link = next(i for i in itens if i["text"].get("link"))
     assert link["text"]["content"] == "https://a.com/x_y"
     assert link["text"]["link"] == {"url": "https://a.com/x_y"}
+
+
+def test_caracteres_de_uso_privado_no_texto_ficam_intactos():
+    for texto in ("x \ue0005\ue001 y", "ícone \ue000\ue001 fim"):
+        assert _texto(texto) == texto
+    itens = _itens("x \ue0005\ue001 e `npm test`")
+    assert [i["text"]["content"] for i in itens] == ["x \ue0005\ue001 e ", "npm test"]
+    assert _texto("&#57344;0&#57345; e `a`") == "\ue0000\ue001 e a"

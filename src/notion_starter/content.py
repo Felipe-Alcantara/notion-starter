@@ -686,11 +686,12 @@ def _limpar_html(linha: str) -> str:
     inline fica intacto (no Markdown, nada entre crases é HTML).
     """
 
+    abre, fecha = _marcadores_livres(linha)
     codigos: list[str] = []
 
     def guardar(m: re.Match[str]) -> str:
         codigos.append(m.group(0))
-        return f"{len(codigos) - 1}"
+        return f"{abre}{len(codigos) - 1}{fecha}"
 
     linha = _RE_CODIGO_INLINE.sub(guardar, linha)
     linha = _RE_H_HTML.sub(lambda m: f"{'#' * int(m.group(1))} {m.group(2).strip()}", linha)
@@ -700,9 +701,30 @@ def _limpar_html(linha: str) -> str:
     linha = _RE_AUTOLINK.sub(lambda m: f"[{m.group(1)}]({m.group(1)})", linha)
     linha = _RE_COMENTARIO_HTML.sub("", linha)
     linha = _RE_TAG.sub(_remover_elemento_html, linha)
-    linha = _RE_ENTIDADE.sub(lambda m: _html.unescape(m.group(0)), linha)
-    linha = re.sub("(\\d+)", lambda m: codigos[int(m.group(1))], linha)
-    return linha.strip()
+    # A entidade só é decodificada fora do código, depois de separar os trechos:
+    # uma entidade que vire um dos marcadores não é confundida com código.
+    partes = re.split(f"{abre}(\\d+){fecha}", linha)
+    return "".join(
+        codigos[int(parte)] if k % 2 else _RE_ENTIDADE.sub(_decodificar_entidade, parte)
+        for k, parte in enumerate(partes)
+    ).strip()
+
+
+def _marcadores_livres(linha: str) -> tuple[str, str]:
+    """Dois caracteres de uso privado que não aparecem em ``linha``.
+
+    Marcam o lugar do código inline enquanto o HTML é limpo; por não estarem no
+    texto, não se confundem com o que a pessoa escreveu.
+    """
+
+    livres = (chr(c) for c in range(0xE000, 0xF900) if chr(c) not in linha)
+    return next(livres), next(livres)
+
+
+def _decodificar_entidade(m: re.Match[str]) -> str:
+    """Troca uma entidade HTML terminada em ``;`` pelo caractere dela."""
+
+    return _html.unescape(m.group(0))
 
 
 def _bloco_imagem(url: str) -> dict[str, Any]:
