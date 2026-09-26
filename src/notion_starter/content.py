@@ -511,11 +511,10 @@ def _ler_link(texto: str, i: int) -> dict[str, Any] | None:
     fecha = texto.find("]", abre)
     if fecha == -1 or texto[fecha + 1 : fecha + 2] != "(":
         return None
-    fim_url = texto.find(")", fecha + 2)
-    if fim_url == -1:
+    destino = _ler_destino(texto, fecha + 2)
+    if destino is None:
         return None
-
-    url = texto[fecha + 2 : fim_url].strip()
+    url, fim_url = destino
     return {
         "tipo": "imagem" if imagem else "link",
         "rotulo": texto[abre:fecha],
@@ -523,6 +522,30 @@ def _ler_link(texto: str, i: int) -> dict[str, Any] | None:
         "valida": _url_valida(url),
         "fim": fim_url + 1,
     }
+
+
+def _ler_destino(texto: str, inicio: int) -> tuple[str, int] | None:
+    """Lê o destino de um link a partir de ``inicio`` (logo depois de ``](``).
+
+    Aceita ``<destino>``, que pode ter espaço e parêntese, e o destino comum
+    com parênteses balanceados (``.../RSA_(sistema)``), como no CommonMark.
+    Devolve a URL e o índice do ``)`` que fecha o link.
+    """
+
+    if texto.startswith("<", inicio):
+        fim = texto.find(">", inicio + 1)
+        if fim == -1 or texto[fim + 1 : fim + 2] != ")":
+            return None
+        return texto[inicio + 1 : fim].strip(), fim + 1
+    profundidade = 0
+    for k in range(inicio, len(texto)):
+        if texto[k] == "(":
+            profundidade += 1
+        elif texto[k] == ")":
+            if not profundidade:
+                return texto[inicio:k].strip(), k
+            profundidade -= 1
+    return None
 
 
 def _url_valida(url: str) -> bool:
@@ -690,7 +713,8 @@ _ELEMENTOS_HTML = frozenset(
     "template textarea tfoot th thead time title tr track tt u ul var video wbr".split()
 )
 _RE_COMENTARIO_HTML = re.compile(r"<!--.*?-->", re.S)
-_RE_AUTOLINK = re.compile(r"<((?:https?|mailto):[^\s<>]+)>", re.I)
+# Autolink solto; logo depois de "](" é destino de link em <...>, não autolink.
+_RE_AUTOLINK = re.compile(r"(?<!\]\()<((?:https?|mailto):[^\s<>]+)>", re.I)
 # Entidade só com ";" final, como no CommonMark: "&copy=1" numa URL fica intacto.
 _RE_ENTIDADE = re.compile(r"&(?:#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});")
 _RE_CODIGO_INLINE = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")

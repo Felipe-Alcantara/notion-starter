@@ -214,3 +214,21 @@ def test_leitura_junta_vizinhos_de_mesma_formatacao():
 )
 def test_abertura_nao_some_depois_que_a_pilha_perde_itens(markdown, esperado):
     assert _formatados(markdown) == esperado
+
+
+
+@pytest.mark.parametrize(
+    ("markdown", "rotulo", "url"),
+    [
+        ("veja [RSA](<https://pt.wikipedia.org/wiki/RSA_(sistema)>) aqui", "RSA",
+         "https://pt.wikipedia.org/wiki/RSA_(sistema)"),
+        ("veja [RSA](https://pt.wikipedia.org/wiki/RSA_(sistema)) aqui", "RSA",
+         "https://pt.wikipedia.org/wiki/RSA_(sistema)"),
+    ],
+)
+def test_destino_de_link_entre_sinais_ou_com_parenteses(markdown, rotulo, url):
+    itens = _itens(markdown)
+    link = [i for i in itens if i["text"].get("link")]
+    assert [i["text"]["content"] for i in link] == [rotulo]
+    assert link[0]["text"]["link"] == {"url": url}
+    assert "".join(i["text"]["content"] for i in itens) == f"veja {rotulo} aqui"
