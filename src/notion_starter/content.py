@@ -665,6 +665,10 @@ def markdown_para_blocos(markdown: str) -> list[dict[str, Any]]:
     (``<div>``, ``<center>``, ``<br>``, ``<a>``, ``<img>``, ``<h1-6>``),
     preservando o conteúdo. Nada de Markdown vira texto literal sem necessidade.
 
+    Linhas recuadas sob um item de lista ou tarefa viram **filhos** dele
+    (``children``), até os dois níveis que a API aceita numa requisição;
+    antes, todo recuo era descartado e a lista saía plana.
+
     Args:
         markdown: Texto em Markdown.
 
@@ -672,30 +676,32 @@ def markdown_para_blocos(markdown: str) -> list[dict[str, Any]]:
         A lista de blocos no formato aceito por ``anexar_blocos``.
     """
 
-    blocos: list[dict[str, Any]] = []
+    itens: list[tuple[int, dict[str, Any]]] = []
     linhas = markdown.splitlines()
     i = 0
     n = len(linhas)
     while i < n:
         bruta = linhas[i]
         despojada = bruta.strip()
+        recuo = _recuo(bruta)
 
         if despojada.startswith("```"):
             lingua = despojada[3:].strip()
             corpo: list[str] = []
             i += 1
             while i < n and not linhas[i].strip().startswith("```"):
-                corpo.append(linhas[i])
+                corpo.append(_sem_recuo(linhas[i], recuo))
                 i += 1
             i += 1  # pula o fechamento ```
-            blocos.extend(_blocos_de_codigo("\n".join(corpo), _normalizar_linguagem(lingua)))
+            for codigo in _blocos_de_codigo("\n".join(corpo), _normalizar_linguagem(lingua)):
+                itens.append((recuo, codigo))
             continue
 
         # Tabela: linha com | seguida de uma linha separadora (---|---).
         if "|" in despojada and i + 1 < n and _eh_separador_tabela(linhas[i + 1]):
             tabela, consumidas = _parse_tabela(linhas, i)
             if tabela is not None:
-                blocos.append(tabela)
+                itens.append((recuo, tabela))
                 i += consumidas
                 continue
 
@@ -713,14 +719,79 @@ def markdown_para_blocos(markdown: str) -> list[dict[str, Any]]:
         # Setext: a próxima linha é só ==== (h1) ou ---- (h2).
         if i + 1 < n and _nivel_setext(linhas[i + 1]) and not _classifica_prefixo(linha):
             nivel = _nivel_setext(linhas[i + 1])
-            blocos.append(_bloco(f"heading_{nivel}", linha))
+            itens.append((recuo, _bloco(f"heading_{nivel}", linha)))
             i += 2
             continue
 
-        blocos.extend(_linha_para_blocos(linha))
+        for bloco in _linha_para_blocos(linha):
+            itens.append((recuo, bloco))
         i += 1
 
-    return blocos
+    return _aninhar_por_recuo(itens)
+
+
+#: Tipos que recebem os blocos recuados abaixo deles como ``children`` — na
+#: escrita e, com o mesmo recuo, na leitura. Itens de lista e tarefas são o
+#: aninhamento que o Markdown expressa sem ambiguidade.
+_TIPOS_QUE_ANINHAM = frozenset({"bulleted_list_item", "numbered_list_item", "to_do"})
+
+#: Na leitura, também o ``toggle`` mostra os filhos recuados sob ele.
+_TIPOS_RECUADOS_NA_LEITURA = _TIPOS_QUE_ANINHAM | {"toggle"}
+
+
+def _recuo(linha: str) -> int:
+    """Colunas de recuo de uma linha (tab conta 4, como no CommonMark)."""
+
+    colunas = 0
+    for caractere in linha:
+        if caractere == " ":
+            colunas += 1
+        elif caractere == "\t":
+            colunas += 4 - colunas % 4
+        else:
+            break
+    return colunas
+
+
+def _sem_recuo(linha: str, recuo: int) -> str:
+    """Tira até ``recuo`` espaços do começo (corpo de código dentro de lista)."""
+
+    tirar = 0
+    while tirar < min(recuo, len(linha)) and linha[tirar] == " ":
+        tirar += 1
+    return linha[tirar:]
+
+
+def _aninhar_por_recuo(itens: list[tuple[int, dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Transforma a sequência ``(recuo, bloco)`` em árvore de ``children``.
+
+    Um bloco com recuo maior que o de um item de lista/tarefa acima dele vira
+    filho desse item (``bloco[tipo]["children"]``), como no Markdown. O limite
+    documentado de append é **dois níveis** de aninhamento por requisição; um
+    recuo mais fundo que isso é achatado no segundo nível (o texto não se
+    perde, só a profundidade extra). Abaixo de um bloco que não aceita filhos
+    (parágrafo, título…), o recuo não aninha: o bloco vira irmão dele.
+    """
+
+    raiz: list[dict[str, Any]] = []
+    # (recuo, bloco, nível, lista onde o bloco mora)
+    pilha: list[tuple[int, dict[str, Any], int, list[dict[str, Any]]]] = []
+    for recuo, bloco in itens:
+        while pilha and recuo <= pilha[-1][0]:
+            pilha.pop()
+        if not pilha:
+            destino, nivel = raiz, 0
+        else:
+            _, pai, nivel_pai, lista_do_pai = pilha[-1]
+            tipo_pai = str(pai.get("type", ""))
+            if tipo_pai in _TIPOS_QUE_ANINHAM and nivel_pai < MAX_NIVEIS_ANINHADOS:
+                destino = pai[tipo_pai].setdefault("children", [])
+                nivel = nivel_pai + 1
+            else:
+                destino, nivel = lista_do_pai, nivel_pai
+        destino.append(bloco)
+        pilha.append((recuo, bloco, nivel, destino))
+    return raiz
 
 
 def _linha_para_blocos(linha: str) -> list[dict[str, Any]]:
@@ -806,7 +877,9 @@ def blocos_para_markdown(blocos: list[dict[str, Any]]) -> str:
     tenham *rich text* viram parágrafo, para nunca descartar conteúdo. Blocos
     aninhados (a chave ``_filhos``, presente quando ``ler_blocos`` é recursivo)
     são incluídos logo após o bloco-pai — assim o conteúdo dentro de colunas e
-    toggles não some.
+    toggles não some. Sob itens de lista, tarefas e toggles os filhos vêm
+    **recuados** (2 espaços; 3 sob item numerado), mostrando a hierarquia que
+    antes aparecia achatada como irmãos.
 
     Args:
         blocos: Lista de blocos como retornados por ``ler_blocos``.
@@ -818,17 +891,22 @@ def blocos_para_markdown(blocos: list[dict[str, Any]]) -> str:
     linhas: list[str] = []
     for bloco in blocos:
         linha = _bloco_para_linha(bloco)
-        if linha is not None:
-            linhas.append(linha)
+        tipo = str(bloco.get("type", ""))
         # As linhas de uma tabela já são consumidas por _tabela_para_markdown;
         # reprocessá-las como filhos genéricos duplicaria o conteúdo.
-        if bloco.get("type") == "table":
+        filhos = None if tipo == "table" else bloco.get("_filhos")
+        aninhado = blocos_para_markdown(filhos) if filhos else ""
+        if aninhado and tipo in _TIPOS_RECUADOS_NA_LEITURA:
+            # Filhos de lista/tarefa/toggle recuados sob o pai, na coluna do
+            # conteúdo do marcador — o mesmo Markdown que a escrita aninha.
+            recuo = " " * (3 if tipo == "numbered_list_item" else 2)
+            corpo = "\n".join(recuo + parte if parte else parte for parte in aninhado.split("\n"))
+            linhas.append(f"{linha or ''}\n{corpo}")
             continue
-        filhos = bloco.get("_filhos")
-        if filhos:
-            aninhado = blocos_para_markdown(filhos)
-            if aninhado:
-                linhas.append(aninhado)
+        if linha is not None:
+            linhas.append(linha)
+        if aninhado:
+            linhas.append(aninhado)
     return "\n\n".join(linhas)
 
 

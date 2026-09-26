@@ -26,6 +26,7 @@ from notion_starter import (
     markdown_para_blocos,
 )
 from notion_starter.content import (
+    contar_elementos,
     perdas_de_formatacao,
     planejar_lotes,
     rich_text_de_codigo,
@@ -1021,10 +1022,12 @@ def editar_bloco(
     blocos = markdown_para_blocos(markdown)
     if not blocos:
         raise ValueError("O conteúdo está vazio — nada a editar.")
+    # Filhos (item recuado) contam: o PATCH de um bloco não aceita children.
+    quantidade = sum(contar_elementos(bloco) for bloco in blocos)
     cli = cliente or _cliente_padrao()
     if not conferir_atual:
-        if len(blocos) != 1:
-            raise EdicaoMultiblocoError(len(blocos))
+        if quantidade != 1:
+            raise EdicaoMultiblocoError(quantidade)
         novo = blocos[0]
         tipo = novo["type"]
         return cli.atualizar_bloco(block_id, {tipo: novo[tipo]})
@@ -1043,8 +1046,8 @@ def editar_bloco(
             "rich_text": blocos[0]["code"]["rich_text"] if cercado else rich_text_de_codigo(texto)
         }
     else:
-        if len(blocos) != 1:
-            raise EdicaoMultiblocoError(len(blocos))
+        if quantidade != 1:
+            raise EdicaoMultiblocoError(quantidade)
         novo = blocos[0]
         tipo_pedido = str(novo["type"])
         # Texto puro vira "paragraph" no Markdown: sem prefixo, vale o tipo atual.
