@@ -386,6 +386,8 @@ class BlocoListado(TypedDict, total=False):
     editado_por: str | None
     na_lixeira: bool
     markdown: str
+    nivel: int
+    pai_id: str
 
 
 def _id_de_usuario(valor: Any) -> str | None:
@@ -427,6 +429,8 @@ def listar_blocos(
     *,
     metadados: bool = False,
     completo: bool = False,
+    recursivo: bool = False,
+    contendo: str | None = None,
     cliente: NotionClient | None = None,
 ) -> list[BlocoListado]:
     """Lista os blocos de topo de uma página com **ID**, tipo e um preview.
@@ -444,21 +448,37 @@ def listar_blocos(
             resposta, sem chamada extra.
         completo: Acrescenta ``markdown`` com o texto **inteiro** do bloco (o
             ``preview`` é cortado em 100 caracteres).
+        recursivo: Desce nos blocos com filhos (um GET por bloco, em
+            sequência; nunca em subpágina/database) e lista os descendentes
+            logo depois do pai, com ``nivel`` (0 = topo) e ``pai_id``.
+        contendo: Só os blocos cujo texto contém este trecho (sem diferenciar
+            maiúsculas) — para achar o ID de um bloco pelo que se leu.
         cliente: Cliente Notion opcional (injeção para testes/uso alternativo).
 
     Returns:
-        Uma entrada por bloco de topo, na ordem em que aparecem na página.
-        Sem as flags, exatamente ``{"id", "tipo", "preview"}`` como sempre.
+        Uma entrada por bloco, na ordem em que aparecem na página. Sem as
+        flags, exatamente ``{"id", "tipo", "preview"}`` como sempre.
     """
 
-    blocos = (cliente or _cliente_padrao()).ler_blocos(page_id, buscar_todos=True)
+    cli = cliente or _cliente_padrao()
+    pares: list[tuple[dict[str, Any], int, str]] = [
+        (bloco, 0, page_id) for bloco in cli.ler_blocos(page_id, buscar_todos=True)
+    ]
+    if recursivo:
+        pares = _achatar_com_descendentes(cli, pares)
+    procura = (contendo or "").casefold()
     listados: list[BlocoListado] = []
-    for bloco in blocos:
+    for bloco, nivel, pai_id in pares:
+        if procura and procura not in blocos_para_markdown([bloco]).casefold():
+            continue
         item: BlocoListado = {
             "id": bloco.get("id", ""),
             "tipo": bloco.get("type", ""),
             "preview": _preview_bloco(bloco),
         }
+        if recursivo:
+            item["nivel"] = nivel
+            item["pai_id"] = pai_id
         if metadados:
             extras = _metadados(bloco)
             item["tem_filhos"] = extras["tem_filhos"]
@@ -471,6 +491,26 @@ def listar_blocos(
             item["markdown"] = blocos_para_markdown([bloco])
         listados.append(item)
     return listados
+
+
+def _achatar_com_descendentes(
+    cliente: NotionClient, pares: list[tuple[dict[str, Any], int, str]]
+) -> list[tuple[dict[str, Any], int, str]]:
+    """Intercala os descendentes logo depois de cada pai, em profundidade."""
+
+    saida: list[tuple[dict[str, Any], int, str]] = []
+    pilha = list(reversed(pares))
+    while pilha:
+        bloco, nivel, pai_id = pilha.pop()
+        saida.append((bloco, nivel, pai_id))
+        bloco_id = str(bloco.get("id") or "")
+        if bloco.get("has_children") and bloco_id and bloco.get("type") not in (
+            "child_page",
+            "child_database",
+        ):
+            filhos = cliente.ler_blocos(bloco_id, buscar_todos=True)
+            pilha.extend((filho, nivel + 1, bloco_id) for filho in reversed(filhos))
+    return saida
 
 
 class PaiDoBloco(TypedDict):

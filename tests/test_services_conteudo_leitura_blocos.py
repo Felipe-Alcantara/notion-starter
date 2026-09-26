@@ -198,3 +198,37 @@ def test_conteudo_nao_inventa_chaves_ausentes():
     lido = svc.ler_pagina_ou_database("x", cliente=ClientePagina({"properties": {}}))
 
     assert set(lido) == {"id", "tipo", "propriedades", "markdown"}
+
+
+def test_listar_blocos_recursivo_poe_os_descendentes_depois_do_pai():
+    cliente = Cliente(
+        {},
+        {
+            "pg": [
+                _paragrafo("a", "topo", has_children=True),
+                {"id": "sp", "type": "child_page", "has_children": True,
+                 "child_page": {"title": "Sub"}},
+                _paragrafo("b", "fim"),
+            ],
+            "a": [_paragrafo("a1", "filho", has_children=True)],
+            "a1": [_paragrafo("a11", "neto")],
+            "sp": [_paragrafo("x", "não deve aparecer")],
+        },
+    )
+
+    blocos = svc.listar_blocos("pg", recursivo=True, cliente=cliente)
+
+    assert [(b["id"], b["nivel"], b["pai_id"]) for b in blocos] == [
+        ("a", 0, "pg"),
+        ("a1", 1, "a"),
+        ("a11", 2, "a1"),
+        ("sp", 0, "pg"),
+        ("b", 0, "pg"),
+    ]
+    assert "sp" not in cliente.lidos
+
+
+def test_listar_blocos_contendo_acha_o_bloco_pelo_texto():
+    cliente = Cliente({}, {"pg": [_paragrafo("a", "Trilha: X"), _paragrafo("b", "outro")]})
+
+    assert [b["id"] for b in svc.listar_blocos("pg", contendo="trilha", cliente=cliente)] == ["a"]
