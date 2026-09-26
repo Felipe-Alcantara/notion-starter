@@ -3,6 +3,13 @@
 Fontes apenas coletam e normalizam itens. O caso de uso :func:`ingerir`
 coordena criação/atualização no Notion e mantém o fluxo idempotente pela
 propriedade ``Origem``.
+
+**Planilhas: posição não é identidade.** Sem ``chave``, a ``Origem`` de uma
+linha é ``arquivo:linha`` — inserir, remover ou reordenar linhas e reimportar
+fazia a página de um registro passar a descrever **outro** (medido: a página
+da Ana virou a da Aline). Com ``chave="Coluna"`` a ``Origem`` passa a ser o
+valor daquela coluna; sem ela, o upsert confere o título antes de atualizar e
+registra a divergência em ``conflitos`` em vez de sobrescrever.
 """
 
 from __future__ import annotations
@@ -14,6 +21,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from notion_starter import NotionClient, properties
+from notion_starter.exceptions import NotionSyncError
 
 LIMITE_TEXTO_NOTION = 2000
 EXTENSOES_TEXTO = {
@@ -59,6 +67,14 @@ class ItemColetado:
     metadados: dict[str, Any] = field(default_factory=dict)
     origem: str = ""
     propriedades: dict[str, Any] = field(default_factory=dict)
+    #: Antes de atualizar a página achada pela ``origem``, conferir se o título
+    #: dela é o ``nome`` do item. É o caso da origem posicional de planilha,
+    #: em que a mesma ``origem`` pode passar a apontar outro registro.
+    conferir_titulo: bool = False
+    #: Origens antigas do mesmo registro (migração): se nada casar com a
+    #: ``origem``, a página com uma destas **e o mesmo título** é atualizada
+    #: e passa a ter a ``origem`` nova.
+    origens_alternativas: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -75,6 +91,29 @@ class ResultadoIngestao:
     erros: int = 0
     itens_processados: int = 0
     falhas: list[str] = field(default_factory=list)
+    #: Itens que **não** foram gravados porque a página achada pela origem tem
+    #: outro título (a posição da linha mudou) — ``"origem: explicação"``.
+    conflitos: list[str] = field(default_factory=list)
+    #: ``True`` quando foi uma simulação: os contadores dizem o que *seria* feito.
+    simulado: bool = False
+
+
+class ChaveDePlanilhaInvalidaError(NotionSyncError, ValueError):
+    """A coluna-chave da planilha não identifica cada linha de forma única.
+
+    Levantada ao coletar, **antes de qualquer escrita**: chave vazia ou
+    repetida faria duas linhas disputarem a mesma página na mesma importação.
+
+    Attributes:
+        problemas: Uma descrição por linha problemática.
+    """
+
+    def __init__(self, problemas: list[str]) -> None:
+        self.problemas = list(problemas)
+        amostra = "; ".join(self.problemas[:5])
+        if len(self.problemas) > 5:
+            amostra += f"; e mais {len(self.problemas) - 5}"
+        super().__init__(f"A coluna-chave não identifica cada linha: {amostra}. Nada foi gravado.")
 
 
 class FonteArquivos:
@@ -206,6 +245,14 @@ class FontePlanilha:
             Colunas fora do mapeamento viram ``rich_text``.
         renomear: Mapeamento opcional ``coluna -> nome da propriedade`` no
             Notion (por padrão, o próprio cabeçalho).
+        chave: Coluna que identifica o registro (ex.: ``"Email"``). A
+            ``Origem`` vira ``arquivo[#aba]#Coluna=valor`` e sobrevive a
+            linhas inseridas, removidas ou reordenadas; renomear o título na
+            planilha atualiza a página. Chave vazia, repetida ou longa demais
+            recusa a importação antes de gravar. Na primeira importação com
+            chave, uma página antiga (``arquivo:linha``) com o mesmo título é
+            reaproveitada, não duplicada. Sem ``chave`` vale a posição da linha
+            (``arquivo:linha``), com a trava de título descrita no módulo.
     """
 
     def __init__(
@@ -216,12 +263,15 @@ class FontePlanilha:
         coluna_titulo: str | None = None,
         tipos: dict[str, str] | None = None,
         renomear: dict[str, str] | None = None,
+        chave: str | None = None,
     ) -> None:
         self._caminho = Path(caminho)
         self._aba = aba
+        self._aba_lida: str | None = None
         self._coluna_titulo = coluna_titulo
         self._tipos = dict(tipos or {})
         self._renomear = dict(renomear or {})
+        self._chave = (chave or "").strip() or None
         for coluna, tipo in self._tipos.items():
             if tipo not in TIPOS_COLUNA:
                 raise ValueError(
@@ -236,24 +286,67 @@ class FontePlanilha:
         coluna_titulo = self._coluna_titulo or cabecalho[0]
         if coluna_titulo not in cabecalho:
             raise ValueError(f"Coluna-título '{coluna_titulo}' não existe no cabeçalho.")
+        if self._chave is not None and self._chave not in cabecalho:
+            raise ValueError(f"Coluna-chave '{self._chave}' não existe no cabeçalho.")
 
+        registros: list[tuple[int, dict[str, Any], str]] = []
         for numero, linha in enumerate(linhas, start=2):
             valores = dict(zip(cabecalho, linha, strict=False))
             titulo = str(valores.get(coluna_titulo) or "").strip()
-            if not titulo:
-                continue
+            if titulo:
+                registros.append((numero, valores, titulo))
+        origens = self._origens_por_chave(registros) if self._chave else {}
+
+        for numero, valores, titulo in registros:
             props, observacoes = self._propriedades_da_linha(valores, coluna_titulo)
             if observacoes:
                 props["Observações"] = properties.rich_text(
                     _limitar_texto("; ".join(observacoes))
                 )
+            posicional = f"{self._caminho.name}:{numero}"
             yield ItemColetado(
                 nome=titulo,
                 tipo_fonte="planilha",
                 metadados={"linha": numero, "arquivo": self._caminho.name},
-                origem=f"{self._caminho.name}:{numero}",
+                origem=origens.get(numero, posicional),
                 propriedades=props,
+                conferir_titulo=not self._chave,
+                origens_alternativas=[posicional] if self._chave else [],
             )
+
+    def _origens_por_chave(
+        self, registros: list[tuple[int, dict[str, Any], str]]
+    ) -> dict[int, str]:
+        """``linha -> Origem`` pela coluna-chave, recusando chave vazia/repetida/longa."""
+
+        coluna = str(self._chave)
+        aba = f"#{self._aba_lida}" if self._aba_lida else ""
+        prefixo = f"{self._caminho.name}{aba}#{coluna}="
+        problemas: list[str] = []
+        origens: dict[int, str] = {}
+        primeira_linha: dict[str, int] = {}
+        for numero, valores, _ in registros:
+            valor = str(valores.get(coluna) if valores.get(coluna) is not None else "").strip()
+            if not valor:
+                problemas.append(f"linha {numero}: '{coluna}' vazia")
+                continue
+            if valor in primeira_linha:
+                problemas.append(
+                    f"linha {numero}: '{coluna}={valor}' repete a linha {primeira_linha[valor]}"
+                )
+                continue
+            primeira_linha[valor] = numero
+            origem = prefixo + valor
+            if len(origem) > LIMITE_TEXTO_NOTION:
+                # Truncar faria duas chaves diferentes colidirem na mesma Origem.
+                problemas.append(
+                    f"linha {numero}: a chave passa de {LIMITE_TEXTO_NOTION} caracteres"
+                )
+                continue
+            origens[numero] = origem
+        if problemas:
+            raise ChaveDePlanilhaInvalidaError(problemas)
+        return origens
 
     # -- Leitura -------------------------------------------------------------
 
@@ -297,6 +390,8 @@ class FontePlanilha:
                 planilha = pasta[self._aba]
             else:
                 planilha = pasta.active
+            # A aba entra na chave: duas abas do mesmo arquivo não podem colidir.
+            self._aba_lida = str(getattr(planilha, "title", "") or "") or None
             linhas = [
                 list(linha)
                 for linha in planilha.iter_rows(values_only=True)
@@ -435,13 +530,73 @@ def _pagina_por_origem(
     return paginas[0] if paginas else None
 
 
+def _titulo_da_pagina(pagina: dict[str, Any]) -> str | None:
+    """Título de uma página devolvida pela consulta; ``None`` se não vier."""
+
+    for prop in (pagina.get("properties") or {}).values():
+        if isinstance(prop, dict) and prop.get("type") == "title":
+            return "".join(
+                str(parte.get("plain_text", "")) for parte in prop.get("title", [])
+            ).strip()
+    return None
+
+
+def _mesmo_titulo(pagina: dict[str, Any], item: ItemColetado) -> bool | None:
+    titulo = _titulo_da_pagina(pagina)
+    if titulo is None:
+        return None  # a resposta não trouxe o título: não há como conferir
+    return titulo == _limitar_texto(item.nome.strip())
+
+
+def _localizar_existente(
+    client: NotionClient,
+    database_id: str,
+    item: ItemColetado,
+    resultado: ResultadoIngestao,
+) -> tuple[dict[str, Any] | None, bool]:
+    """Página a atualizar (ou ``None``) e se o item deve ser pulado por conflito."""
+
+    existente = _pagina_por_origem(client, database_id, item.origem)
+    if existente and item.conferir_titulo and _mesmo_titulo(existente, item) is False:
+        resultado.conflitos.append(
+            f"{item.origem}: a página {existente.get('id', '')} tem o título "
+            f"'{_titulo_da_pagina(existente)}', mas esta linha agora é '{item.nome.strip()}' "
+            "— a posição da linha mudou. Nada foi gravado para ela; importe com uma "
+            "coluna-chave (chave=...) para casar pelo registro, não pela posição."
+        )
+        return None, True
+    if existente:
+        return existente, False
+    for alternativa in item.origens_alternativas:
+        candidata = _pagina_por_origem(client, database_id, alternativa)
+        if candidata and _mesmo_titulo(candidata, item):
+            return candidata, False
+    return None, False
+
+
 def ingerir(
     fonte: Fonte,
     *,
     client: NotionClient | None = None,
     database_id: str | None = None,
+    simular: bool = False,
 ) -> ResultadoIngestao:
-    """Cria ou atualiza no Notion os itens produzidos por ``fonte``."""
+    """Cria ou atualiza no Notion os itens produzidos por ``fonte``.
+
+    O upsert casa cada item pela propriedade ``Origem``. Itens com
+    ``conferir_titulo`` (planilha sem chave) só atualizam a página achada se
+    o título bater; senão entram em ``conflitos`` e nada é gravado para eles.
+
+    Args:
+        fonte: Qualquer :class:`Fonte`.
+        client: Cliente Notion (padrão: o da configuração).
+        database_id: Database de destino (padrão: ``NOTION_DATABASE_ID``).
+        simular: Não grava nada; os contadores e ``conflitos`` dizem o que
+            seria feito (a leitura das páginas existentes acontece).
+
+    Returns:
+        Um :class:`ResultadoIngestao`.
+    """
 
     if client is None:
         from integrations.notion import criar_cliente
@@ -461,19 +616,25 @@ def ingerir(
     # direto.
     upsert_por_origem = schema is None or _coluna_compativel(schema, "Origem", "rich_text")
 
-    resultado = ResultadoIngestao()
+    resultado = ResultadoIngestao(simulado=simular)
     for item in fonte.coletar():
         resultado.itens_processados += 1
         try:
             props = _propriedades_de_item(item, schema)
-            existente = (
-                _pagina_por_origem(client, db_id, item.origem) if upsert_por_origem else None
+            existente, conflito = (
+                _localizar_existente(client, db_id, item, resultado)
+                if upsert_por_origem
+                else (None, False)
             )
+            if conflito:
+                continue
             if existente and existente.get("id"):
-                client.atualizar_pagina(str(existente["id"]), props)
+                if not simular:
+                    client.atualizar_pagina(str(existente["id"]), props)
                 resultado.atualizados += 1
             else:
-                client.criar_pagina(db_id, props)
+                if not simular:
+                    client.criar_pagina(db_id, props)
                 resultado.criados += 1
         except Exception as exc:
             # Ingestão é lote: uma fonte inválida ou item rejeitado não impede
