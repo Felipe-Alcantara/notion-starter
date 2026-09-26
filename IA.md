@@ -574,3 +574,30 @@ subpágina e os `except` das exceções novas (as que derivam só de
 reordenar (em vez de recusar) e limpar células vazias na reimportação por chave
 são melhorias que o projeto ainda poderia receber. Nenhuma versão nova foi
 publicada; o release fica para a decisão do mantenedor.
+
+---
+
+## [2026-09-25] Revisão da auditoria: código lido com o recuo e release 0.4.0
+
+Registro gravado em 2026-09-26 às 03:12 (-03), durante a correção dos
+bloqueantes apontados pela revisão das mudanças de 2026-09-25.
+
+### Leitura de bloco de código perdia o recuo
+
+**O que estava errado (medido na API real, numa subpágina-sandbox).** Depois de
+a CLI passar a mandar o código com o recuo, o `GET /blocks/{id}` confirmou
+`"    return valor\n\nfim"` gravado, mas `blocos_para_markdown` devolvia
+` ```python\nreturn valor\n\nfim\n``` `: `_texto_de_bloco` fazia `strip()` também
+no código. Quem conferia a edição pela saída (`editar-bloco`, `ler-bloco`,
+`conteudo`) via outro código, e quem relia a página para reescrevê-la gravava o
+código sem o recuo.
+
+**Decisão.** No código (`formatado=False`) só as quebras de linha das pontas
+saem, o mesmo corte que `editar_bloco` faz na escrita (`strip("\n")`). O texto
+formatado dos outros blocos continua com `strip()`, porque ali espaço nas pontas
+não é conteúdo.
+
+**Validação.** Dois testes novos em `tests/test_content.py` (ida e volta com a
+primeira linha recuada; YAML com recuo e espaços no fim) falham com o código
+anterior e passam agora. Na API real, `ler-bloco` passou a mostrar os quatro
+espaços que o `GET` já tinha.

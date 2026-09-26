@@ -292,6 +292,26 @@ def test_blocos_para_markdown_round_trip():
     assert blocos_para_markdown(blocos) == md
 
 
+def test_blocos_para_markdown_preserva_o_recuo_do_codigo():
+    """A leitura fazia strip() no código: a primeira linha recuada voltava sem o
+    recuo, e quem relia para conferir (ou reescrevia a página a partir da
+    leitura) via ou gravava outro código. A escrita já preservava o recuo."""
+
+    md = "```python\n    return valor\n\nfim\n```"
+    blocos = _reidratar(markdown_para_blocos(md))
+
+    assert blocos[0]["code"]["rich_text"][0]["plain_text"] == "    return valor\n\nfim"
+    assert blocos_para_markdown(blocos) == md
+
+
+def test_blocos_para_markdown_codigo_tira_so_as_quebras_das_pontas():
+    bloco = {
+        "type": "code",
+        "code": {"language": "yaml", "rich_text": [{"plain_text": "\n  - item\n  - outro  \n"}]},
+    }
+    assert blocos_para_markdown([bloco]) == "```yaml\n  - item\n  - outro  \n```"
+
+
 def test_blocos_para_markdown_tipo_desconhecido_vira_paragrafo():
     blocos = [
         {

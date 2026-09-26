@@ -478,14 +478,18 @@ def _texto_de_bloco(bloco: dict[str, Any], *, formatado: bool = True) -> str:
     """Extrai o texto de um bloco, reconstruindo a formatação inline em Markdown.
 
     Com ``formatado=False`` devolve só o texto puro (útil para código, onde a
-    marcação não deve ser reaplicada).
+    marcação não deve ser reaplicada). Nesse caso só as quebras de linha das
+    pontas saem: no código, o recuo da primeira linha e os espaços do fim são
+    conteúdo — é o mesmo corte que a escrita faz (``strip("\\n")``), então ler
+    e regravar devolve o mesmo código.
     """
 
     tipo = bloco.get("type", "")
     corpo = bloco.get(tipo, {})
     itens = corpo.get("rich_text", []) if isinstance(corpo, dict) else []
-    render = _item_para_markdown if formatado else _texto_de_item
-    return "".join(render(item) for item in itens).strip()
+    if not formatado:
+        return "".join(_texto_de_item(item) for item in itens).strip("\n")
+    return "".join(_item_para_markdown(item) for item in itens).strip()
 
 
 def _texto_de_item(item: dict[str, Any]) -> str:
