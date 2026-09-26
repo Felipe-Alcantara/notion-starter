@@ -112,3 +112,44 @@ def test_ida_e_volta_de_texto_simples_com_sublinhado_e_asterisco():
     markdown = blocos_para_markdown([bloco])
     assert _texto(markdown) == "rode snake_case_name e 2 * 3 * 4"
     assert _formatados(markdown) == {}
+
+
+# -- HTML ---------------------------------------------------------------------
+
+
+def test_codigo_inline_nunca_perde_marcador_entre_sinais_de_menor_e_maior():
+    itens = _itens("rode `DATABASE_URL=<banco descartável migrado> python x.py` e `a@<versão>`")
+    codigos = [i["text"]["content"] for i in itens if (i.get("annotations") or {}).get("code")]
+    assert codigos == ["DATABASE_URL=<banco descartável migrado> python x.py", "a@<versão>"]
+
+
+def test_codigo_inline_nao_decodifica_entidade_nem_remove_tag():
+    itens = _itens("`a &amp; <b>` fim")
+    assert itens[0]["text"]["content"] == "a &amp; <b>"
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "use <versão>, <id> e <nome do banco> aqui",
+        "se a < b e c > d, ok",
+        "filtro: https://a.com/busca?q=x&region=br&copy=1&para=2",
+    ],
+)
+def test_texto_que_parece_html_fica_intacto(texto):
+    assert _texto(texto) == texto
+
+
+def test_tags_de_elementos_html_e_comentarios_sao_removidos():
+    assert _texto('<div align="center">x</div> <!-- nota --> <b>y</b>') == "x  y"
+
+
+def test_entidade_com_ponto_e_virgula_e_decodificada():
+    assert _texto("a &amp; b &copy; c") == "a & b © c"
+
+
+def test_autolink_vira_link_com_a_propria_url():
+    itens = _itens("veja <https://a.com/x_y> agora")
+    link = next(i for i in itens if i["text"].get("link"))
+    assert link["text"]["content"] == "https://a.com/x_y"
+    assert link["text"]["link"] == {"url": "https://a.com/x_y"}

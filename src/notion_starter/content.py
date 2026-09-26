@@ -608,7 +608,29 @@ def _item_para_markdown(item: dict[str, Any]) -> str:
 _RE_IMG_HTML = re.compile(r"<img\b[^>]*?\bsrc\s*=\s*['\"]([^'\"]+)['\"][^>]*>", re.I)
 _RE_A_HTML = re.compile(r"<a\b[^>]*?\bhref\s*=\s*['\"]([^'\"]+)['\"][^>]*>(.*?)</a>", re.I | re.S)
 _RE_H_HTML = re.compile(r"<h([1-6])\b[^>]*>(.*?)</h\1>", re.I | re.S)
-_RE_TAG = re.compile(r"<[^>]+>")
+# Tag de abertura/fechamento na sintaxe do CommonMark (nome e atributos ASCII).
+_RE_TAG = re.compile(
+    r"</?([A-Za-z][A-Za-z0-9-]*)"
+    r"(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s\"'=<>`]+))?)*"
+    r"\s*/?>"
+)
+# Só elementos do HTML são removidos: "<versão>", "<id>" ou "<nome>" num texto
+# são marcadores de conteúdo, não HTML.
+_ELEMENTOS_HTML = frozenset(
+    "a abbr address area article aside audio b base bdi bdo big blockquote body br "
+    "button canvas caption center cite code col colgroup data datalist dd del details "
+    "dfn dialog div dl dt em embed fieldset figcaption figure font footer form h1 h2 "
+    "h3 h4 h5 h6 head header hgroup hr html i iframe img input ins kbd label legend li "
+    "link main map mark menu meta meter nav noscript object ol optgroup option output "
+    "p param picture pre progress q rp rt ruby s samp script search section select "
+    "slot small source span strike strong style sub summary sup table tbody td "
+    "template textarea tfoot th thead time title tr track tt u ul var video wbr".split()
+)
+_RE_COMENTARIO_HTML = re.compile(r"<!--.*?-->", re.S)
+_RE_AUTOLINK = re.compile(r"<((?:https?|mailto):[^\s<>]+)>", re.I)
+# Entidade só com ";" final, como no CommonMark: "&copy=1" numa URL fica intacto.
+_RE_ENTIDADE = re.compile(r"&(?:#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});")
+_RE_CODIGO_INLINE = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 _RE_IMG_MD = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 # Imagem opcionalmente embrulhada por um link: [![alt](img)](href).
 _RE_BADGE = re.compile(r"\[!\[([^\]]*)\]\(([^)]+)\)\]\(([^)]+)\)")
@@ -618,20 +640,39 @@ _RE_IMG_OU_BADGE = re.compile(
 )
 
 
+def _remover_elemento_html(m: re.Match[str]) -> str:
+    """Apaga a tag quando o nome é de um elemento HTML; senão ela é texto."""
+
+    return "" if m.group(1).lower() in _ELEMENTOS_HTML else m.group(0)
+
+
 def _limpar_html(linha: str) -> str:
     """Converte HTML de layout em Markdown equivalente e remove o restante.
 
     Mantém o **conteúdo**; descarta só o invólucro. ``<img>`` vira ``![](src)``,
     ``<a href>`` vira ``[texto](href)``, ``<hN>`` vira ``#``..``######``, ``<br>``
-    vira quebra; demais tags são removidas e as entidades HTML são decodificadas.
+    vira quebra, ``<https://...>`` vira link; as demais tags de elementos HTML são
+    removidas e as entidades HTML terminadas em ``;`` são decodificadas. Código
+    inline fica intacto (no Markdown, nada entre crases é HTML).
     """
 
+    codigos: list[str] = []
+
+    def guardar(m: re.Match[str]) -> str:
+        codigos.append(m.group(0))
+        return f"{len(codigos) - 1}"
+
+    linha = _RE_CODIGO_INLINE.sub(guardar, linha)
     linha = _RE_H_HTML.sub(lambda m: f"{'#' * int(m.group(1))} {m.group(2).strip()}", linha)
     linha = _RE_A_HTML.sub(lambda m: f"[{m.group(2).strip()}]({m.group(1).strip()})", linha)
     linha = _RE_IMG_HTML.sub(lambda m: f"![]({m.group(1).strip()})", linha)
     linha = re.sub(r"<br\s*/?>", " ", linha, flags=re.I)
-    linha = _RE_TAG.sub("", linha)
-    return _html.unescape(linha).strip()
+    linha = _RE_AUTOLINK.sub(lambda m: f"[{m.group(1)}]({m.group(1)})", linha)
+    linha = _RE_COMENTARIO_HTML.sub("", linha)
+    linha = _RE_TAG.sub(_remover_elemento_html, linha)
+    linha = _RE_ENTIDADE.sub(lambda m: _html.unescape(m.group(0)), linha)
+    linha = re.sub("(\\d+)", lambda m: codigos[int(m.group(1))], linha)
+    return linha.strip()
 
 
 def _bloco_imagem(url: str) -> dict[str, Any]:
