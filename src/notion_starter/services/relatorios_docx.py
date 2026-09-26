@@ -20,35 +20,93 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Any
-
-try:  # pragma: no cover - coberto indiretamente nos ambientes com dependencia.
-    from docx import Document
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.opc.constants import RELATIONSHIP_TYPE
-    from docx.oxml import OxmlElement
-    from docx.oxml.ns import qn
-    from docx.shared import Cm, Emu, Inches, Pt, RGBColor
-except ImportError as exc:  # pragma: no cover
-    raise RuntimeError(
-        "A exportacao DOCX exige a dependencia 'python-docx'. "
-        "Instale o pacote ou reinstale notion-starter."
-    ) from exc
+from typing import TYPE_CHECKING, Any
 
 from notion_starter import readers
 from notion_starter.content import blocos_para_markdown
 
+if TYPE_CHECKING:  # pragma: no cover - só para as anotações
+    from docx.shared import RGBColor
+
+# python-docx (e o lxml por baixo dele) é carregado só na primeira renderização,
+# por _carregar_docx(): importar no topo custava ~100 ms (20-29% da abertura,
+# medido) em TODO comando da CLI, que importa este módulo mesmo sem exportar.
+# Os nomes abaixo são preenchidos por _carregar_docx().
+Document: Any = None
+WD_ALIGN_PARAGRAPH: Any = None
+RELATIONSHIP_TYPE: Any = None
+OxmlElement: Any = None
+qn: Any = None
+Cm: Any = None
+Emu: Any = None
+Inches: Any = None
+Pt: Any = None
+
 # Identidade visual extraida dos DOCXs de exemplo anexados na task de origem
 # (relatorios de 2026-04-22 a 2026-05-01): Arial no corpo, azul-marinho nos
 # titulos, azul nos subtitulos, texto em cinza-escuro e tabelas com cabecalho
-# preenchido + linhas zebradas.
+# preenchido + linhas zebradas. As cores ficam em RGB puro até o python-docx
+# ser carregado; _carregar_docx() cria os RGBColor.
 _FONTE = "Arial"
-_COR_MARINHO = RGBColor(0x1B, 0x3A, 0x5C)
-_COR_AZUL = RGBColor(0x2E, 0x75, 0xB6)
-_COR_AZUL_ESCURO = RGBColor(0x1F, 0x4D, 0x78)
-_COR_TEXTO = RGBColor(0x40, 0x40, 0x40)
-_COR_DATA = RGBColor(0x59, 0x59, 0x59)
-_COR_VERDE = RGBColor(0x1A, 0x5C, 0x2E)
+_RGB = {
+    "_COR_MARINHO": (0x1B, 0x3A, 0x5C),
+    "_COR_AZUL": (0x2E, 0x75, 0xB6),
+    "_COR_AZUL_ESCURO": (0x1F, 0x4D, 0x78),
+    "_COR_TEXTO": (0x40, 0x40, 0x40),
+    "_COR_DATA": (0x59, 0x59, 0x59),
+    "_COR_VERDE": (0x1A, 0x5C, 0x2E),
+    "_COR_BRANCO": (0xFF, 0xFF, 0xFF),
+}
+_COR_MARINHO: Any = None
+_COR_AZUL: Any = None
+_COR_AZUL_ESCURO: Any = None
+_COR_TEXTO: Any = None
+_COR_DATA: Any = None
+_COR_VERDE: Any = None
+_COR_BRANCO: Any = None
+
+
+def _carregar_docx() -> None:
+    """Importa o python-docx na primeira renderização (idempotente).
+
+    Raises:
+        RuntimeError: Se o python-docx não estiver instalado — só quem exporta
+            DOCX precisa dele; os demais comandos seguem funcionando.
+    """
+
+    if Document is not None:
+        return
+    try:
+        import docx
+        from docx.enum.text import WD_ALIGN_PARAGRAPH as alinhamento
+        from docx.opc.constants import RELATIONSHIP_TYPE as relacoes
+        from docx.oxml import OxmlElement as elemento
+        from docx.oxml.ns import qn as nome_qualificado
+        from docx.shared import Cm as cm
+        from docx.shared import Emu as emu
+        from docx.shared import Inches as polegadas
+        from docx.shared import Pt as pontos
+        from docx.shared import RGBColor as cor_rgb
+    except ImportError as exc:  # pragma: no cover - depende do ambiente
+        raise RuntimeError(
+            "A exportacao DOCX exige a dependencia 'python-docx'. "
+            "Instale o pacote ou reinstale notion-starter."
+        ) from exc
+    globals().update(
+        {
+            "WD_ALIGN_PARAGRAPH": alinhamento,
+            "RELATIONSHIP_TYPE": relacoes,
+            "OxmlElement": elemento,
+            "qn": nome_qualificado,
+            "Cm": cm,
+            "Emu": emu,
+            "Inches": polegadas,
+            "Pt": pontos,
+            **{nome: cor_rgb(*rgb) for nome, rgb in _RGB.items()},
+            # Por último: é o marcador de "já carregado".
+            "Document": docx.Document,
+        }
+    )
 _FILL_CABECALHO = "1B3A5C"
 _FILL_CHAVE = "D5E8F0"
 _FILL_ZEBRA = "F2F2F2"
@@ -208,6 +266,7 @@ def renderizar_docx(
 ) -> Path:
     """Renderiza um relatorio ja carregado em um arquivo DOCX."""
 
+    _carregar_docx()
     documento = Document()
     numerador = _NumeradorSecoes()
     curtos, longos = _separar_metadados(propriedades, propriedades_destaque, titulo)
@@ -723,7 +782,7 @@ def _adicionar_tabela_markdown(documento: Any, linhas: list[str]) -> None:
                     cells[idx],
                     _texto_sem_marcacao_inline(valor),
                     bold=True,
-                    cor=RGBColor(0xFF, 0xFF, 0xFF),
+                    cor=_COR_BRANCO,
                 )
                 _sombrear_celula(cells[idx], _FILL_CABECALHO)
             else:
