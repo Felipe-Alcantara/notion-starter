@@ -33,6 +33,27 @@ class IdNotionInvalidoError(NotionSyncError, ValueError):
         )
 
 
+class RichTextNaoRegravavelError(NotionSyncError, ValueError):
+    """Um item de *rich text* lido da API não pode ser reenviado numa requisição.
+
+    A resposta traz tipos que só existem na leitura — a menção de prévia de
+    link (``link_preview``) é documentada como somente leitura, e ``custom_emoji``
+    nem aparece entre as menções da referência de *rich text*. Reenviar o bloco
+    com um deles daria HTTP 400 (ou, pior, gravaria sem ele); a operação é
+    recusada antes, dizendo o que bloqueou.
+
+    Attributes:
+        tipo: O tipo do item (ou da menção) que não pode ser gravado.
+    """
+
+    def __init__(self, tipo: str) -> None:
+        self.tipo = tipo
+        super().__init__(
+            f"O texto tem um item do tipo '{tipo}', que a API do Notion devolve na "
+            "leitura mas não aceita numa escrita; regravar o bloco o perderia."
+        )
+
+
 class NotionHTTPError(NotionAPIError):
     """Resposta HTTP de erro retornada pela API do Notion.
 

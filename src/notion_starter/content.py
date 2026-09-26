@@ -31,6 +31,7 @@ import re
 from typing import Any
 
 from .constants import MAX_RICH_TEXT
+from .exceptions import RichTextNaoRegravavelError
 from .utils import fatiar_utf16
 
 # Tipos de bloco do Notion que carregam *rich text* num campo de mesmo nome.
@@ -157,6 +158,71 @@ def _codigo_inline(texto: str) -> list[dict[str, Any]]:
     for pedaco in fatiar_utf16(texto, MAX_RICH_TEXT):
         itens.append(_item_texto(pedaco))
     return itens
+
+
+#: Menções que a referência de *rich text* documenta e que se reenviam pelo ID.
+_MENCOES_POR_ID = ("page", "database")
+
+
+def _mencao_para_requisicao(mencao: dict[str, Any]) -> dict[str, Any]:
+    """Reduz uma menção lida da API ao formato aceito numa requisição."""
+
+    tipo = str(mencao.get("type") or "")
+    corpo = mencao.get(tipo)
+    if not isinstance(corpo, dict):
+        raise RichTextNaoRegravavelError(f"mention:{tipo or '?'}")
+    if tipo == "user":
+        # A resposta traz nome, avatar e e-mail do usuário; a requisição só
+        # aceita a referência (o exemplo oficial usa object + id).
+        return {"type": "user", "user": {"object": "user", "id": corpo.get("id")}}
+    if tipo in _MENCOES_POR_ID:
+        return {"type": tipo, tipo: {"id": corpo.get("id")}}
+    if tipo in ("date", "template_mention"):
+        return {"type": tipo, tipo: dict(corpo)}
+    # link_preview é somente leitura; custom_emoji e afins não estão na
+    # referência de menções — reenviar seria adivinhar.
+    raise RichTextNaoRegravavelError(f"mention:{tipo}")
+
+
+def item_para_requisicao(item: dict[str, Any]) -> dict[str, Any]:
+    """Converte um item de *rich text* **lido** da API no formato de **escrita**.
+
+    A leitura traz campos que a escrita não aceita ou ignora (``plain_text``,
+    ``href``, o objeto completo do usuário mencionado). Reenviar o item cru
+    funciona para texto, mas dá HTTP 400 numa menção de usuário. Aqui cada
+    item vira só o que a requisição precisa, preservando ``annotations`` (cor,
+    sublinhado, negrito…) e o link.
+
+    Raises:
+        RichTextNaoRegravavelError: Para tipos que não se regravam
+            (ex.: menção ``link_preview``).
+    """
+
+    tipo = str(item.get("type") or ("text" if "text" in item or "plain_text" in item else ""))
+    if tipo == "text":
+        texto = item.get("text") if isinstance(item.get("text"), dict) else {}
+        corpo: dict[str, Any] = {"content": texto.get("content", item.get("plain_text", ""))}
+        link = texto.get("link")
+        if isinstance(link, dict) and link.get("url"):
+            corpo["link"] = {"url": link["url"]}
+        novo: dict[str, Any] = {"type": "text", "text": corpo}
+    elif tipo == "equation":
+        equacao = item.get("equation") or {}
+        novo = {"type": "equation", "equation": {"expression": equacao.get("expression", "")}}
+    elif tipo == "mention":
+        novo = {"type": "mention", "mention": _mencao_para_requisicao(item.get("mention") or {})}
+    else:
+        raise RichTextNaoRegravavelError(tipo or "?")
+    anotacoes = item.get("annotations")
+    if isinstance(anotacoes, dict) and anotacoes:
+        novo["annotations"] = dict(anotacoes)
+    return novo
+
+
+def rich_text_para_requisicao(itens: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Aplica :func:`item_para_requisicao` a um *rich text* inteiro."""
+
+    return [item_para_requisicao(item) for item in itens if isinstance(item, dict)]
 
 
 # Marcadores de ênfase, do mais longo para o mais curto (a ordem evita que ``*``
