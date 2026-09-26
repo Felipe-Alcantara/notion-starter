@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypedDict
 
 from notion_starter import (
     NotionClient,
@@ -37,6 +37,7 @@ from notion_starter.exceptions import (
     EdicaoMultiblocoError,
     EscritaAbaixoDeDatabaseError,
     EscritaParcialError,
+    ExclusaoArriscadaError,
     LimpezaIncompletaError,
     NotionConnectionError,
     NotionHTTPError,
@@ -331,11 +332,66 @@ def _preview_bloco(bloco: dict[str, Any]) -> str:
     return linha
 
 
+class BlocoListado(TypedDict, total=False):
+    """Um bloco de topo como :func:`listar_blocos` o descreve.
+
+    ``id``, ``tipo`` e ``preview`` vêm sempre; os carimbos e ``tem_filhos``
+    só com ``metadados=True``; ``markdown`` só com ``completo=True``.
+    """
+
+    id: str
+    tipo: str
+    preview: str
+    tem_filhos: bool
+    criado_em: str | None
+    editado_em: str | None
+    criado_por: str | None
+    editado_por: str | None
+    na_lixeira: bool
+    markdown: str
+
+
+def _id_de_usuario(valor: Any) -> str | None:
+    return str(valor.get("id")) if isinstance(valor, dict) and valor.get("id") else None
+
+
+class MetadadosBloco(TypedDict):
+    """Carimbos de um bloco, como :func:`listar_blocos`/:func:`ler_bloco` os expõem."""
+
+    tem_filhos: bool
+    criado_em: str | None
+    editado_em: str | None
+    criado_por: str | None
+    editado_por: str | None
+    na_lixeira: bool
+
+
+def _metadados(bloco: dict[str, Any]) -> MetadadosBloco:
+    """Carimbos que a API já devolve em cada bloco — sem chamada extra.
+
+    Os horários vêm como a API os dá; observado no workspace real que eles
+    chegam arredondados ao minuto (a documentação não fala em precisão), então
+    não servem para ordenar eventos do mesmo minuto. ``tem_filhos`` também é
+    verdadeiro para ``child_page``/``child_database``.
+    """
+
+    return {
+        "tem_filhos": bool(bloco.get("has_children")),
+        "criado_em": bloco.get("created_time"),
+        "editado_em": bloco.get("last_edited_time"),
+        "criado_por": _id_de_usuario(bloco.get("created_by")),
+        "editado_por": _id_de_usuario(bloco.get("last_edited_by")),
+        "na_lixeira": bool(bloco.get("in_trash")),
+    }
+
+
 def listar_blocos(
     page_id: str,
     *,
+    metadados: bool = False,
+    completo: bool = False,
     cliente: NotionClient | None = None,
-) -> list[dict[str, str]]:
+) -> list[BlocoListado]:
     """Lista os blocos de topo de uma página com **ID**, tipo e um preview.
 
     É o par que faltava para ``editar-bloco``/``apagar-bloco``: ``conteudo`` lê o
@@ -346,22 +402,117 @@ def listar_blocos(
 
     Args:
         page_id: ID da página (ou bloco) cujos filhos serão listados.
+        metadados: Acrescenta ``tem_filhos``, ``criado_em``, ``editado_em``,
+            ``criado_por``, ``editado_por`` e ``na_lixeira`` — já vêm na mesma
+            resposta, sem chamada extra.
+        completo: Acrescenta ``markdown`` com o texto **inteiro** do bloco (o
+            ``preview`` é cortado em 100 caracteres).
         cliente: Cliente Notion opcional (injeção para testes/uso alternativo).
 
     Returns:
-        Lista de ``{"id", "tipo", "preview"}`` — uma entrada por bloco de topo,
-        na ordem em que aparecem na página.
+        Uma entrada por bloco de topo, na ordem em que aparecem na página.
+        Sem as flags, exatamente ``{"id", "tipo", "preview"}`` como sempre.
     """
 
     blocos = (cliente or _cliente_padrao()).ler_blocos(page_id, buscar_todos=True)
-    return [
-        {
+    listados: list[BlocoListado] = []
+    for bloco in blocos:
+        item: BlocoListado = {
             "id": bloco.get("id", ""),
             "tipo": bloco.get("type", ""),
             "preview": _preview_bloco(bloco),
         }
-        for bloco in blocos
-    ]
+        if metadados:
+            extras = _metadados(bloco)
+            item["tem_filhos"] = extras["tem_filhos"]
+            item["criado_em"] = extras["criado_em"]
+            item["editado_em"] = extras["editado_em"]
+            item["criado_por"] = extras["criado_por"]
+            item["editado_por"] = extras["editado_por"]
+            item["na_lixeira"] = extras["na_lixeira"]
+        if completo:
+            item["markdown"] = blocos_para_markdown([bloco])
+        listados.append(item)
+    return listados
+
+
+class PaiDoBloco(TypedDict):
+    """Onde o bloco mora: o ``parent`` da API, sem fixar a lista de tipos."""
+
+    tipo: str
+    id: str | None
+
+
+class BlocoLido(TypedDict):
+    """Um bloco lido por :func:`ler_bloco`."""
+
+    id: str
+    tipo: str
+    markdown: str
+    tem_filhos: bool
+    pai: PaiDoBloco
+    criado_em: str | None
+    editado_em: str | None
+    criado_por: str | None
+    editado_por: str | None
+    na_lixeira: bool
+
+
+def _ler_subarvore(cliente: NotionClient, bloco_id: str) -> list[dict[str, Any]]:
+    """Filhos de um bloco com ``_filhos`` aninhados, sem descer em subpágina/database."""
+
+    filhos = cliente.ler_blocos(bloco_id, buscar_todos=True)
+    for filho in filhos:
+        tipo = filho.get("type")
+        if filho.get("has_children") and filho.get("id") and tipo not in (
+            "child_page",
+            "child_database",
+        ):
+            filho["_filhos"] = _ler_subarvore(cliente, str(filho["id"]))
+    return filhos
+
+
+def ler_bloco(
+    block_id: str,
+    *,
+    cliente: NotionClient | None = None,
+) -> BlocoLido:
+    """Lê **um** bloco pelo ID, com o Markdown inteiro e os metadados.
+
+    Serve a quem só tem o ID (um bloco aninhado, um link com ``#bloco``, ou a
+    conferência antes de ``editar_bloco``). Quando o bloco tem filhos, eles
+    entram no Markdown — exceto em ``child_page``/``child_database``, cujo
+    conteúdo é uma página/linhas à parte (leia com ``ler_pagina_ou_database``).
+
+    Args:
+        block_id: ID do bloco.
+        cliente: Cliente Notion opcional (injeção para testes/uso alternativo).
+
+    Returns:
+        Um :class:`BlocoLido`.
+    """
+
+    cli = cliente or _cliente_padrao()
+    bloco = cli.obter_bloco(block_id)
+    tipo = str(bloco.get("type", ""))
+    if bloco.get("has_children") and tipo not in ("child_page", "child_database"):
+        bloco["_filhos"] = _ler_subarvore(cli, block_id)
+    pai = bloco.get("parent") if isinstance(bloco.get("parent"), dict) else {}
+    tipo_pai = str(pai.get("type", ""))
+    id_pai = pai.get(tipo_pai)
+    extras = _metadados(bloco)
+    return {
+        "id": str(bloco.get("id") or block_id),
+        "tipo": tipo,
+        "markdown": blocos_para_markdown([bloco]),
+        "tem_filhos": extras["tem_filhos"],
+        "pai": {"tipo": tipo_pai, "id": id_pai if isinstance(id_pai, str) else None},
+        "criado_em": extras["criado_em"],
+        "editado_em": extras["editado_em"],
+        "criado_por": extras["criado_por"],
+        "editado_por": extras["editado_por"],
+        "na_lixeira": extras["na_lixeira"],
+    }
 
 
 def _recriavel_isolado(bloco: dict[str, Any]) -> bool:
@@ -1001,6 +1152,71 @@ def excluir_bloco(
     """
 
     return (cliente or _cliente_padrao()).excluir_bloco(block_id)
+
+
+#: Tipos cujo DELETE leva **uma árvore inteira** para a lixeira.
+_TIPOS_DE_EXCLUSAO_ARRISCADA = frozenset({"child_page", "child_database"})
+
+
+@dataclass
+class ResultadoExclusao:
+    """O que :func:`apagar_bloco_verificado` mandou para a lixeira.
+
+    Attributes:
+        id: ID do bloco.
+        tipo: Tipo do bloco.
+        resumo: Título (subpágina/database) ou preview do texto.
+        tem_filhos: Se havia filhos (foram junto para a lixeira).
+    """
+
+    id: str
+    tipo: str
+    resumo: str
+    tem_filhos: bool
+
+
+def apagar_bloco_verificado(
+    block_id: str,
+    *,
+    forcar_tipos_arriscados: bool = False,
+    cliente: NotionClient | None = None,
+) -> ResultadoExclusao:
+    """Lê o bloco, recusa subpágina/database sem pedido explícito e só então apaga.
+
+    ``excluir_bloco`` apaga o que receber: medido no workspace real, apagar
+    por engano o ID de uma subpágina mandou para a lixeira 11 subpáginas, 2
+    databases e 28 linhas, e a resposta era igual à de apagar um parágrafo.
+    Aqui o alvo é conferido antes (``GET /blocks/{id}``) e o resultado diz o
+    que foi apagado. Para desfazer, use :func:`restaurar_blocos` com o ID.
+
+    Args:
+        block_id: ID do bloco.
+        forcar_tipos_arriscados: Necessário para apagar ``child_page`` ou
+            ``child_database`` — leva tudo o que está dentro.
+        cliente: Cliente Notion opcional (injeção para testes/uso alternativo).
+
+    Returns:
+        Um :class:`ResultadoExclusao`.
+
+    Raises:
+        ExclusaoArriscadaError: Subpágina/database sem ``forcar_tipos_arriscados``.
+    """
+
+    cli = cliente or _cliente_padrao()
+    bloco = cli.obter_bloco(block_id)
+    tipo = str(bloco.get("type", ""))
+    titulo = str((bloco.get(tipo) or {}).get("title", "")) if tipo in (
+        _TIPOS_DE_EXCLUSAO_ARRISCADA
+    ) else ""
+    if tipo in _TIPOS_DE_EXCLUSAO_ARRISCADA and not forcar_tipos_arriscados:
+        raise ExclusaoArriscadaError(block_id, tipo, titulo)
+    cli.excluir_bloco(block_id)
+    return ResultadoExclusao(
+        id=str(bloco.get("id") or block_id),
+        tipo=tipo,
+        resumo=titulo or _preview_bloco(bloco),
+        tem_filhos=bool(bloco.get("has_children")),
+    )
 
 
 def limpar_conteudo(

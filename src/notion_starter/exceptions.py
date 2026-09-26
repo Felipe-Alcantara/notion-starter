@@ -260,6 +260,25 @@ class PerdaDeFormatacaoError(EdicaoDeBlocoError):
         )
 
 
+class ExclusaoArriscadaError(NotionSyncError, ValueError):
+    """Apagar este bloco levaria uma subpágina ou um database inteiro para a lixeira.
+
+    Attributes:
+        tipo: ``child_page`` ou ``child_database``.
+        titulo: Título do alvo.
+    """
+
+    def __init__(self, block_id: str, tipo: str, titulo: str) -> None:
+        self.tipo = tipo
+        self.titulo = titulo
+        alvo = "a subpágina" if tipo == "child_page" else "o database"
+        super().__init__(
+            f"O bloco {block_id} é {alvo} '{titulo or '(sem título)'}': apagá-lo manda "
+            "para a lixeira tudo o que está dentro. Nada foi apagado. Se é isso mesmo, "
+            "repita com forcar_tipos_arriscados=True."
+        )
+
+
 class TrechoError(EdicaoDeBlocoError):
     """Base das recusas de :func:`~notion_starter.services.conteudo.trocar_trecho`."""
 
