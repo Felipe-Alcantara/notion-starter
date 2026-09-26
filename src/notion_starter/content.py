@@ -584,7 +584,7 @@ def _texto_de_bloco(bloco: dict[str, Any], *, formatado: bool = True) -> str:
     itens = corpo.get("rich_text", []) if isinstance(corpo, dict) else []
     if not formatado:
         return "".join(_texto_de_item(item) for item in itens).strip("\n")
-    return "".join(_item_para_markdown(item) for item in itens).strip()
+    return _rich_text_para_markdown(itens).strip()
 
 
 def _texto_de_item(item: dict[str, Any]) -> str:
@@ -601,35 +601,66 @@ def _texto_de_item(item: dict[str, Any]) -> str:
     return item.get("plain_text", item.get("text", {}).get("content", ""))
 
 
-def _item_para_markdown(item: dict[str, Any]) -> str:
-    """Reconstrói a marcação Markdown de um item de *rich text*.
+def _rich_text_para_markdown(itens: list[dict[str, Any]]) -> str:
+    """Markdown de um *rich text*, juntando vizinhos de mesma formatação e link.
 
-    Reaplica ``**``/``*``/``~~``/``` ` ``` a partir de ``annotations`` e
-    ``[texto](url)`` a partir do ``link``, fazendo o par com ``_parse_inline``.
+    Dois negritos seguidos virariam ``**a****b**``, que a escrita relê como uma
+    corrida de quatro marcadores; ``**ab**`` volta igual.
     """
 
-    texto = _texto_de_item(item)
-    if not texto:
-        return ""
+    grupos: list[tuple[tuple[Any, ...], list[str]]] = []
+    for item in itens:
+        texto = _texto_de_item(item)
+        if not texto:
+            continue
+        chave = _formatacao_markdown(item)
+        if grupos and grupos[-1][0] == chave:
+            grupos[-1][1].append(texto)
+        else:
+            grupos.append((chave, [texto]))
+    return "".join(_markdown_de_trecho("".join(textos), *chave) for chave, textos in grupos)
+
+
+def _formatacao_markdown(item: dict[str, Any]) -> tuple[Any, ...]:
+    """O que o Markdown consegue representar de um item: ênfases, código e link."""
+
     anot = item.get("annotations", {}) or {}
-    if anot.get("code"):
+    link = item.get("text", {}).get("link") or item.get("href")
+    if isinstance(link, dict):
+        link = link.get("url")
+    return (
+        bool(anot.get("code")),
+        bool(anot.get("bold")),
+        bool(anot.get("italic")),
+        bool(anot.get("strikethrough")),
+        link or None,
+    )
+
+
+def _markdown_de_trecho(
+    texto: str, codigo: bool, negrito: bool, italico: bool, tachado: bool, link: str | None
+) -> str:
+    """Reconstrói a marcação Markdown de um trecho de *rich text*.
+
+    Reaplica ``**``/``*``/``~~``/``` ` ``` e ``[texto](url)``, fazendo o par
+    com ``_parse_inline``.
+    """
+
+    if codigo:
         texto = f"`{texto}`"
-    elif texto.strip():
+    elif texto.strip() and (negrito or italico or tachado):
         # O espaço da ponta fica fora dos marcadores: "**Nota:** " relê como
         # negrito, "**Nota: **" não fecha (marcador depois de espaço).
         miolo = texto.strip()
         inicio = texto[: len(texto) - len(texto.lstrip())]
         fim = texto[len(texto.rstrip()) :]
-        if anot.get("bold"):
+        if negrito:
             miolo = f"**{miolo}**"
-        if anot.get("italic"):
+        if italico:
             miolo = f"*{miolo}*"
-        if anot.get("strikethrough"):
+        if tachado:
             miolo = f"~~{miolo}~~"
         texto = f"{inicio}{miolo}{fim}"
-    link = item.get("text", {}).get("link") or item.get("href")
-    if isinstance(link, dict):
-        link = link.get("url")
     if link:
         texto = f"[{texto}]({link})"
     return texto
@@ -1143,7 +1174,7 @@ def _tabela_para_markdown(bloco: dict[str, Any]) -> str:
     linhas_md: list[str] = []
     for indice, filho in enumerate(filhos):
         celulas = filho.get("table_row", {}).get("cells", [])
-        textos = ["".join(_item_para_markdown(i) for i in cel) for cel in celulas]
+        textos = [_rich_text_para_markdown(cel) for cel in celulas]
         textos = (textos + [""] * largura)[:largura]
         linhas_md.append("| " + " | ".join(textos) + " |")
         if indice == 0:

@@ -193,3 +193,10 @@ def test_caracteres_de_uso_privado_no_texto_ficam_intactos():
     itens = _itens("x \ue0005\ue001 e `npm test`")
     assert [i["text"]["content"] for i in itens] == ["x \ue0005\ue001 e ", "npm test"]
     assert _texto("&#57344;0&#57345; e `a`") == "\ue0000\ue001 e a"
+
+
+def test_leitura_junta_vizinhos_de_mesma_formatacao():
+    bloco = _paragrafo(_item("Nota ", bold=True), _item("Agente:", bold=True), _item(" fim"))
+    markdown = blocos_para_markdown([bloco])
+    assert markdown == "**Nota Agente:** fim"
+    assert _formatados(markdown) == {"Nota Agente:": {"bold"}}

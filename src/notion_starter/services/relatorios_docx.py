@@ -626,7 +626,7 @@ def _adicionar_linha_markdown(
 
 
 # Ordem importa: ``**`` antes de ``*`` (senão negrito casa como itálico) e o
-# link por último entre os pares. Cobre o que ``_item_para_markdown`` do
+# link por último entre os pares. Cobre o que ``_markdown_de_trecho`` do
 # ``content.py`` emite: negrito, itálico, tachado, código e ``[texto](url)``.
 _PADRAO_INLINE = re.compile(
     r"(\*\*[^*]+\*\*|\*[^*]+\*|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)\s]+\))"
