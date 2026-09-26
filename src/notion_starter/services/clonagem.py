@@ -21,6 +21,7 @@ from __future__ import annotations
 from typing import Any
 
 from notion_starter import NotionClient
+from notion_starter.utils import chave_de_id
 
 # Tipos de propriedade gerados pelo Notion: existem no schema mas não aceitam
 # valor na criação/cópia de uma linha.
@@ -129,7 +130,11 @@ def _clonar_relacao(
     rel = definicao.get("relation", {})
     alvo = rel.get("data_source_id") or rel.get("database_id")
     # Auto-relação: a origem aponta para si mesma -> o clone aponta para si.
-    destino = fonte_destino_id if alvo == fonte_origem_id else alvo
+    destino = (
+        fonte_destino_id
+        if alvo and chave_de_id(alvo) == chave_de_id(fonte_origem_id)
+        else alvo
+    )
     return {"relation": {"data_source_id": destino, "single_property": {}}}
 
 

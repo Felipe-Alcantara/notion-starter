@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
+
+from .exceptions import IdNotionInvalidoError
 
 
 def fatiar_utf16(texto: str, limite: int) -> list[str]:
@@ -110,3 +114,95 @@ def sanitize_text(text: str) -> str:
             return text.encode('utf-8', errors='replace').decode('utf-8')
         # Outros erros de encoding - re-raise
         raise
+
+# -- IDs do Notion -------------------------------------------------------------
+
+_RE_UUID_INTEIRO = re.compile(
+    r"^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$", re.IGNORECASE
+)
+# ID ao fim de um trecho de URL: 32 hexadecimais colados (forma do link) ou o
+# UUID com hífens. O slug do título vem antes, separado por hífen.
+_RE_ID_NO_FIM = re.compile(
+    r"([0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+    re.IGNORECASE,
+)
+
+
+def chave_de_id(identificador: str) -> str:
+    """Forma comparável de um ID do Notion: sem hífens e em minúsculas.
+
+    A API aceita o UUID com ou sem hífens; comparar a forma crua diria que
+    ``3e691f95-497e-…`` e ``3e691f95497e…`` são páginas diferentes. Não valida
+    nada — serve só para comparar.
+    """
+
+    return str(identificador).strip().replace("-", "").lower()
+
+
+def _canonico(hexa: str) -> str:
+    limpo = hexa.replace("-", "").lower()
+    return f"{limpo[:8]}-{limpo[8:12]}-{limpo[12:16]}-{limpo[16:20]}-{limpo[20:]}"
+
+
+def _id_no_fim(trecho: str) -> str | None:
+    achado = _RE_ID_NO_FIM.search(trecho.strip())
+    return _canonico(achado.group(1)) if achado else None
+
+
+def normalizar_id(valor: str, *, preferir_ancora: bool = False) -> str:
+    """Devolve o ID canônico (``8-4-4-4-12``, minúsculo) de um UUID ou link do Notion.
+
+    Aceita o UUID com ou sem hífens (a forma sem hífens é a que aparece no
+    campo ``url`` das respostas) e links de ``notion.so``, ``app.notion.com`` e
+    ``*.notion.site``. Num link:
+
+    - o ID da página sai do **último trecho do caminho** (``Titulo-<32hex>``);
+    - ``?p=<32hex>`` (página aberta em painel) vence o caminho;
+    - ``?v=<32hex>`` é o ID de uma **view** de database e é sempre ignorado;
+    - ``#<32hex>`` aponta um bloco dentro da página e só vence quando
+      ``preferir_ancora`` é verdadeiro (argumentos que esperam um bloco).
+
+    Args:
+        valor: UUID ou URL recebido de quem opera.
+        preferir_ancora: Usa a âncora ``#<id>`` quando houver.
+
+    Returns:
+        O UUID canônico com hífens.
+
+    Raises:
+        IdNotionInvalidoError: Se ``valor`` não contém um ID do Notion.
+    """
+
+    bruto = str(valor or "").strip()
+    if _RE_UUID_INTEIRO.match(bruto):
+        return _canonico(bruto)
+
+    partes = urlsplit(bruto)
+    if partes.scheme and partes.netloc:
+        if preferir_ancora and partes.fragment:
+            ancora = _id_no_fim(partes.fragment)
+            if ancora:
+                return ancora
+        painel = parse_qs(partes.query).get("p", [])
+        if painel and _RE_UUID_INTEIRO.match(painel[0]):
+            return _canonico(painel[0])
+        ultimo = partes.path.rstrip("/").rsplit("/", 1)[-1]
+        do_caminho = _id_no_fim(ultimo)
+        if do_caminho:
+            return do_caminho
+
+    raise IdNotionInvalidoError(valor)
+
+
+def extrair_id(valor: str, *, preferir_ancora: bool = False) -> str:
+    """Como :func:`normalizar_id`, mas devolve ``valor`` sem espaços quando não há ID.
+
+    Para a camada de serviço, que também é chamada com identificadores que não
+    são UUID (testes, *fakes*): quem não reconhece um ID deixa a validação para
+    a API, em vez de recusar antes.
+    """
+
+    try:
+        return normalizar_id(valor, preferir_ancora=preferir_ancora)
+    except IdNotionInvalidoError:
+        return str(valor or "").strip()

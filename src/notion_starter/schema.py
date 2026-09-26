@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .exceptions import NotionSchemaError
+from .utils import chave_de_id
 
 #: Um schema é um mapeamento de nome de coluna para o tipo de propriedade
 #: Notion esperado, ex.: ``{"Nome": "title", "Email": "email", "Cadastro": "date"}``.
@@ -269,14 +270,8 @@ def _relacao_de(info: dict[str, Any], database_id: str) -> Relacao | None:
         coluna_espelho=(
             dupla.get("synced_property_name") if isinstance(dupla, dict) else None
         ),
-        auto_referente=_sem_hifens(alvo) == _sem_hifens(database_id),
+        auto_referente=chave_de_id(alvo) == chave_de_id(database_id),
     )
-
-
-def _sem_hifens(identificador: str) -> str:
-    """Compara IDs do Notion ignorando hífens — a API aceita as duas formas."""
-
-    return identificador.replace("-", "").lower()
 
 
 def descrever_database(database: dict[str, Any]) -> DescricaoDatabase:

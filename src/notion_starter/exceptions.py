@@ -15,6 +15,24 @@ class NotionConfigurationError(NotionSyncError):
     """Configuração local necessária para chamar a API do Notion está ausente ou inválida."""
 
 
+class IdNotionInvalidoError(NotionSyncError, ValueError):
+    """O valor recebido não contém um ID do Notion (32 hexadecimais).
+
+    Deriva também de ``ValueError`` para as bordas que já tratam entrada
+    inválida por esse tipo continuarem funcionando.
+
+    Attributes:
+        valor: O texto recebido.
+    """
+
+    def __init__(self, valor: str) -> None:
+        self.valor = valor
+        super().__init__(
+            f"'{valor}' não contém um ID do Notion (32 hexadecimais). Copie o link "
+            "da página ou use 'buscar <termo>' para achar o ID."
+        )
+
+
 class NotionHTTPError(NotionAPIError):
     """Resposta HTTP de erro retornada pela API do Notion.
 

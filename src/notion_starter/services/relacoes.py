@@ -26,6 +26,7 @@ from typing import Any
 
 from notion_starter import NotionClient
 from notion_starter.schema import descrever_database
+from notion_starter.utils import chave_de_id
 
 
 def _cliente_padrao() -> NotionClient:
@@ -34,12 +35,6 @@ def _cliente_padrao() -> NotionClient:
     from integrations.notion import criar_cliente
 
     return criar_cliente()
-
-
-def _sem_hifens(identificador: str) -> str:
-    """Compara IDs do Notion ignorando hífens — a API aceita as duas formas."""
-
-    return str(identificador).replace("-", "").lower()
 
 
 @dataclass
@@ -124,14 +119,14 @@ def _aplicar(
         ``True`` se houve escrita; ``False`` se já estava como se queria.
     """
 
-    presente = any(_sem_hifens(item) == _sem_hifens(alvo) for item in ligados)
+    presente = any(chave_de_id(item) == chave_de_id(alvo) for item in ligados)
     if desfazer and not presente:
         return False
     if not desfazer and presente:
         return False
 
     if desfazer:
-        novos = [item for item in ligados if _sem_hifens(item) != _sem_hifens(alvo)]
+        novos = [item for item in ligados if chave_de_id(item) != chave_de_id(alvo)]
     else:
         novos = [*ligados, alvo]
 
