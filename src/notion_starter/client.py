@@ -132,9 +132,9 @@ class PageUpdatePayload(TypedDict):
 
 
 class PageArchivePayload(TypedDict):
-    """Payload para arquivamento de página."""
+    """Payload para mandar uma página para a lixeira (``in_trash``)."""
 
-    archived: bool
+    in_trash: bool
 
 
 class PosicaoInicioPayload(TypedDict):
@@ -172,12 +172,6 @@ class BlockRestorePayload(TypedDict):
     """Payload que tira um bloco da lixeira (``in_trash: false``)."""
 
     in_trash: bool
-
-
-class BlockArchivePayload(TypedDict):
-    """Payload para arquivar um bloco (delete reversível do Notion)."""
-
-    archived: bool
 
 
 def _eh_leitura(metodo: str, path: str) -> bool:
@@ -1143,7 +1137,13 @@ class NotionClient:
         )
 
     def arquivar_pagina(self, page_id: str) -> dict[str, Any]:
-        """Arquiva uma página do Notion.
+        """Manda uma página para a lixeira (``PATCH /pages/{id}`` com ``in_trash``).
+
+        Usa ``in_trash``, e não ``archived``: a versão ``2026-03-11`` da API
+        removeu ``archived`` de requisições e respostas
+        (https://developers.notion.com/reference/changes-by-version), e medido
+        em 2026-09-26 que a versão ``2022-06-28`` fixada aqui já aceita
+        ``in_trash``. É um dos passos que a troca de ``NOTION_VERSION`` exigirá.
 
         Args:
             page_id: ID da página.
@@ -1153,7 +1153,7 @@ class NotionClient:
         """
 
         limpo = _validar_identificador(page_id, "page_id")
-        payload: PageArchivePayload = {"archived": True}
+        payload: PageArchivePayload = {"in_trash": True}
         return self._request_json(
             method="PATCH",
             path=f"/pages/{limpo}",

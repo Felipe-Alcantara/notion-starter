@@ -240,3 +240,19 @@ def test_ler_itens_de_propriedade_nao_paginada_devolve_um_item():
     assert _cliente().ler_itens_de_propriedade("pg", "num") == [
         {"object": "property_item", "type": "number", "number": 3}
     ]
+
+
+# -- arquivar_pagina -------------------------------------------------------------------
+
+
+@responses.activate
+def test_arquivar_pagina_usa_in_trash_e_nao_archived():
+    """``archived`` sai da API na versão 2026-03-11; ``in_trash`` já vale na 2022-06-28."""
+
+    responses.add(
+        responses.PATCH, f"{NOTION_BASE_URL}/pages/pg", json={"id": "pg", "in_trash": True}
+    )
+
+    _cliente().arquivar_pagina("pg")
+
+    assert _corpo() == {"in_trash": True}
