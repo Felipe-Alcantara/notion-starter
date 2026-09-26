@@ -150,3 +150,51 @@ def test_apagar_paragrafo_devolve_tipo_e_preview():
     resultado = svc.apagar_bloco_verificado("b1", cliente=cliente)
 
     assert (resultado.tipo, resultado.resumo) == ("paragraph", "texto do bloco")
+
+
+# -- conteudo: onde a página mora -----------------------------------------------------
+
+
+class ClientePagina:
+    def __init__(self, pagina: dict[str, Any]) -> None:
+        self.pagina = pagina
+
+    def obter_pagina(self, page_id):
+        return self.pagina
+
+    def ler_blocos(self, block_id, page_size=100, buscar_todos=False, recursivo=False):
+        return [_paragrafo("b1", "corpo")]
+
+
+def test_conteudo_diz_de_qual_database_e_a_linha():
+    pagina = {
+        "id": "linha",
+        "parent": {"type": "database_id", "database_id": "db9"},
+        "url": "https://www.notion.so/linha",
+        "created_time": "2026-09-25T10:00:00.000Z",
+        "last_edited_time": "2026-09-25T11:00:00.000Z",
+        "properties": {},
+    }
+
+    lido = svc.ler_pagina_ou_database("linha", cliente=ClientePagina(pagina))
+
+    assert lido["pai"] == {"tipo": "database_id", "id": "db9"}
+    assert lido["url"] == "https://www.notion.so/linha"
+    assert lido["editado_em"] == "2026-09-25T11:00:00.000Z"
+
+
+def test_conteudo_com_pai_data_source_expoe_o_database():
+    pagina = {
+        "parent": {"type": "data_source_id", "data_source_id": "ds1", "database_id": "db1"},
+        "properties": {},
+    }
+
+    lido = svc.ler_pagina_ou_database("linha", cliente=ClientePagina(pagina))
+
+    assert lido["pai"] == {"tipo": "data_source_id", "id": "ds1", "database_id": "db1"}
+
+
+def test_conteudo_nao_inventa_chaves_ausentes():
+    lido = svc.ler_pagina_ou_database("x", cliente=ClientePagina({"properties": {}}))
+
+    assert set(lido) == {"id", "tipo", "propriedades", "markdown"}

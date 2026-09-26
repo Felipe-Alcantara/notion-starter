@@ -287,17 +287,23 @@ def ler_pagina_ou_database(
         páginas — ``propriedades`` é o mapa coluna → valor simples (vazio para
         páginas soltas, fora de database); ``{"tipo": "database", "markdown":
         "", "linhas": [...]}`` quando o ID é um database com linhas. Páginas
-        sem corpo voltam como ``"pagina"`` com markdown vazio.
+        sem corpo voltam como ``"pagina"`` com markdown vazio. Quando a página
+        é lida, vêm também ``pai`` (``{"tipo", "id"}`` — numa linha de
+        database, o database para rodar ``schema``), ``url``, ``criado_em`` e
+        ``editado_em``, sem chamada extra (só os que a resposta trouxer).
     """
 
     from notion_starter.readers import extrair_valores
 
     cli = cliente or _cliente_padrao()
     propriedades: dict[str, Any] = {}
+    contexto: dict[str, Any] = {}
     try:
-        valores = extrair_valores(cli.obter_pagina(page_id))
+        pagina = cli.obter_pagina(page_id)
+        valores = extrair_valores(pagina)
         # Só valores preenchidos: coluna vazia não é informação na leitura.
         propriedades = {k: v for k, v in valores.items() if v not in (None, "", [])}
+        contexto = _contexto_da_pagina(pagina)
     except Exception:
         # O ID pode ser um database (o endpoint de página responde 404) — o
         # fallback abaixo resolve; propriedades ficam vazias.
@@ -310,12 +316,42 @@ def ler_pagina_ou_database(
             "tipo": "pagina",
             "propriedades": propriedades,
             "markdown": markdown,
+            **contexto,
         }
 
     linhas = listar_linhas(page_id, cliente=cli)
     if linhas:
         return {"id": page_id, "tipo": "database", "markdown": "", "linhas": linhas}
-    return {"id": page_id, "tipo": "pagina", "propriedades": {}, "markdown": ""}
+    return {"id": page_id, "tipo": "pagina", "propriedades": {}, "markdown": "", **contexto}
+
+
+def _contexto_da_pagina(pagina: dict[str, Any]) -> dict[str, Any]:
+    """Onde a página mora e quando mudou — só o que a resposta trouxe.
+
+    ``pai`` repassa o ``parent`` da API sem fixar a lista de tipos
+    (``database_id``, ``page_id``, ``block_id``, ``workspace``…); quando o pai
+    é um *data source*, o ``database_id`` que vem junto também é exposto,
+    porque é ele que ``schema``/``linhas`` recebem. Campos ausentes na
+    resposta não viram chave (nada de ``None`` inventado).
+    """
+
+    contexto: dict[str, Any] = {}
+    pai = pagina.get("parent")
+    if isinstance(pai, dict) and pai.get("type"):
+        tipo = str(pai["type"])
+        valor = pai.get(tipo)
+        dados_pai: dict[str, Any] = {"tipo": tipo, "id": valor if isinstance(valor, str) else None}
+        if tipo == "data_source_id" and isinstance(pai.get("database_id"), str):
+            dados_pai["database_id"] = pai["database_id"]
+        contexto["pai"] = dados_pai
+    for origem, destino in (
+        ("url", "url"),
+        ("created_time", "criado_em"),
+        ("last_edited_time", "editado_em"),
+    ):
+        if pagina.get(origem):
+            contexto[destino] = pagina[origem]
+    return contexto
 
 
 def _preview_bloco(bloco: dict[str, Any]) -> str:
