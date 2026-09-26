@@ -51,9 +51,11 @@ isso o código de um bloco `code` sai da leitura sem `strip()` (só as quebras d
 linha das pontas, o mesmo corte da escrita), e um teste de ida e volta com a
 primeira linha recuada guarda esse contrato. Pelo mesmo motivo, a leitura deixa o
 espaço da ponta fora dos marcadores (`**Nota:** `): a escrita segue o
-flanqueamento do CommonMark e não fecha negrito depois de espaço. A única forma
-que não volta igual é um trecho formatado que começa ou termina com o próprio
-marcador (um tachado de `~`), porque a biblioteca não tem escape com barra.
+flanqueamento do CommonMark e não fecha negrito depois de espaço. Vizinhos de
+mesma formatação saem juntos (`**ab**`). Não voltam iguais só um trecho
+formatado que começa ou termina com o próprio marcador (um tachado de `~`),
+porque a biblioteca não tem escape com barra, e trechos de formatações
+diferentes colados sem espaço.
 
 Os *fakes* desses testes imitam a API real (ordem de filhos, `position`,
 `results` com os irmãos seguintes, 400 nos limites) e o comportamento foi
