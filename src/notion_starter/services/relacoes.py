@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from notion_starter import NotionClient
+from notion_starter.constants import MAX_ITENS_ARRAY
+from notion_starter.exceptions import NotionSyncError
 from notion_starter.schema import descrever_database
 from notion_starter.utils import chave_de_id
 
@@ -35,6 +37,31 @@ def _cliente_padrao() -> NotionClient:
     from integrations.notion import criar_cliente
 
     return criar_cliente()
+
+
+class RelacaoGrandeDemaisError(NotionSyncError, ValueError):
+    """A relação passaria de 100 páginas, o máximo que a API grava por requisição.
+
+    A única forma de ligar/desligar pela API é regravar a lista inteira da
+    coluna (https://developers.notion.com/reference/request-limits: "Any
+    relation: 100 related pages"). Acima disso a operação é recusada **antes**
+    do PATCH, sem tocar na página.
+
+    Attributes:
+        page_id: Página cuja relação seria gravada.
+        coluna: Coluna de relação.
+        tamanho: Quantas páginas a lista teria.
+    """
+
+    def __init__(self, page_id: str, coluna: str, tamanho: int) -> None:
+        self.page_id = page_id
+        self.coluna = coluna
+        self.tamanho = tamanho
+        super().__init__(
+            f"A coluna '{coluna}' da página {page_id} ficaria com {tamanho} páginas "
+            f"ligadas; a API grava no máximo {MAX_ITENS_ARRAY} por requisição e regravar "
+            "a lista inteira é o único jeito de mudá-la. Nada foi alterado nesta página."
+        )
 
 
 @dataclass
@@ -101,7 +128,23 @@ def _relacao_da_coluna(
         for item in props[coluna].get("relation", [])
         if isinstance(item, dict) and item.get("id")
     ]
+    if props[coluna].get("has_more"):
+        # GET /pages corta a relação em 25 referências. Regravar a lista cortada
+        # apagava da página tudo depois da 25ª — e um alvo já ligado além dela
+        # parecia ausente. A lista inteira vem do endpoint de propriedade.
+        ligados = _ids_da_relacao_completa(cliente, page_id, str(props[coluna].get("id", "")))
     return pagina, ligados
+
+
+def _ids_da_relacao_completa(cliente: NotionClient, page_id: str, property_id: str) -> list[str]:
+    """IDs de todas as páginas ligadas, lendo a propriedade paginada inteira."""
+
+    ids: list[str] = []
+    for item in cliente.ler_itens_de_propriedade(page_id, property_id):
+        relacao = item.get("relation") if isinstance(item, dict) else None
+        if isinstance(relacao, dict) and relacao.get("id"):
+            ids.append(str(relacao["id"]))
+    return ids
 
 
 def _aplicar(
@@ -129,6 +172,8 @@ def _aplicar(
         novos = [item for item in ligados if chave_de_id(item) != chave_de_id(alvo)]
     else:
         novos = [*ligados, alvo]
+    if len(novos) > MAX_ITENS_ARRAY:
+        raise RelacaoGrandeDemaisError(page_id, coluna, len(novos))
 
     cliente.atualizar_pagina(
         page_id, {coluna: {"relation": [{"id": item} for item in novos]}}
@@ -173,6 +218,14 @@ def relacionar(
 
     Raises:
         ValueError: Se a coluna não existir ou não for de relação.
+        RelacaoGrandeDemaisError: Se uma ponta passaria de 100 páginas ligadas.
+            Numa relação auto-referente de mão única a ponta ``A`` é gravada
+            antes de ``B`` ser relida; se só ``B`` estourar, ``A`` fica gravada
+            e a mensagem diz qual página faltou.
+
+    Note:
+        Relações com mais de 25 páginas são lidas por inteiro (o ``GET
+        /pages`` corta em 25); sem isso, regravar a lista apagava o excedente.
     """
 
     cliente = cliente or _cliente_padrao()

@@ -192,11 +192,11 @@ def test_404_no_delete_nao_rele_o_bloco():
     assert [c.request.method for c in responses.calls] == ["DELETE"]
 
 
-# -- ler_propriedade ----------------------------------------------------------
+# -- ler_itens_de_propriedade ----------------------------------------------------------
 
 
 @responses.activate
-def test_ler_propriedade_percorre_toda_a_paginacao():
+def test_ler_itens_de_propriedade_percorre_toda_a_paginacao():
     """``GET /pages`` corta relação em 25; o endpoint de propriedade não."""
 
     url = f"{NOTION_BASE_URL}/pages/pg/properties/%3AAbc"
@@ -221,7 +221,7 @@ def test_ler_propriedade_percorre_toda_a_paginacao():
         },
     )
 
-    itens = _cliente().ler_propriedade("pg", "%3AAbc")
+    itens = _cliente().ler_itens_de_propriedade("pg", "%3AAbc")
 
     assert len(itens) == 101
     assert "start_cursor=c2" in responses.calls[1].request.url
@@ -230,13 +230,13 @@ def test_ler_propriedade_percorre_toda_a_paginacao():
 
 
 @responses.activate
-def test_ler_propriedade_nao_paginada_devolve_um_item():
+def test_ler_itens_de_propriedade_nao_paginada_devolve_um_item():
     responses.add(
         responses.GET,
         f"{NOTION_BASE_URL}/pages/pg/properties/num",
         json={"object": "property_item", "type": "number", "number": 3},
     )
 
-    assert _cliente().ler_propriedade("pg", "num") == [
+    assert _cliente().ler_itens_de_propriedade("pg", "num") == [
         {"object": "property_item", "type": "number", "number": 3}
     ]

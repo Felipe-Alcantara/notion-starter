@@ -169,3 +169,91 @@ def test_coluna_que_nao_e_relacao_aponta_o_comando_certo():
 
     with pytest.raises(ValueError, match="editar-linha"):
         relacionar("pagina-a", "pagina-b", "Nome", cliente=cliente)
+
+
+# -- relações com mais de 25 páginas --------------------------------------------------
+
+
+class RelacaoGrande(ClienteFalso):
+    """Como a API: ``GET /pages`` devolve 25 referências e ``has_more``."""
+
+    def __init__(self, total: int, **kwargs: Any) -> None:
+        super().__init__(tipo="dual_property", alvo=OUTRO_DATABASE, **kwargs)
+        self.ligados["pagina-a"] = [f"b{i:02d}" for i in range(total)]
+        self.leituras_de_propriedade = 0
+
+    def obter_pagina(self, page_id: str) -> dict[str, Any]:
+        pagina = super().obter_pagina(page_id)
+        prop = pagina["properties"][self.coluna]
+        prop["id"] = "%3ARel"
+        prop["has_more"] = len(prop["relation"]) > 25
+        prop["relation"] = prop["relation"][:25]
+        return pagina
+
+    def ler_itens_de_propriedade(self, page_id: str, property_id: str) -> list[dict[str, Any]]:
+        assert property_id == "%3ARel"
+        self.leituras_de_propriedade += 1
+        return [
+            {"object": "property_item", "type": "relation", "relation": {"id": item}}
+            for item in self.ligados.get(page_id, [])
+        ]
+
+
+def test_ligar_com_mais_de_25_nao_apaga_as_excedentes():
+    """Medido: 26 ligadas + 1 nova gravava 26, e a 26ª sumia."""
+
+    cliente = RelacaoGrande(40)
+
+    relacionar("pagina-a", "nova", "Relacionadas", cliente=cliente)
+
+    assert len(cliente.ligados["pagina-a"]) == 41
+    assert cliente.ligados["pagina-a"][-1] == "nova"
+
+
+def test_desfazer_com_mais_de_25_remove_so_o_alvo():
+    cliente = RelacaoGrande(40)
+
+    relacionar("pagina-a", "b00", "Relacionadas", desfazer=True, cliente=cliente)
+
+    assert len(cliente.ligados["pagina-a"]) == 39
+    assert "b00" not in cliente.ligados["pagina-a"]
+
+
+def test_alvo_ja_ligado_depois_da_25a_posicao_nao_gera_escrita():
+    cliente = RelacaoGrande(40)
+
+    resultado = relacionar("pagina-a", "b30", "Relacionadas", cliente=cliente)
+
+    assert cliente.patches == []
+    assert resultado["paginas_ja_no_estado"] == ["pagina-a"]
+
+
+def test_desfazer_alvo_depois_da_25a_posicao_remove_de_fato():
+    cliente = RelacaoGrande(40)
+
+    resultado = relacionar("pagina-a", "b30", "Relacionadas", desfazer=True, cliente=cliente)
+
+    assert resultado["paginas_escritas"] == ["pagina-a"]
+    assert "b30" not in cliente.ligados["pagina-a"]
+
+
+def test_relacao_ate_25_nao_faz_leitura_extra():
+    cliente = RelacaoGrande(3)
+
+    relacionar("pagina-a", "nova", "Relacionadas", cliente=cliente)
+
+    assert cliente.leituras_de_propriedade == 0
+
+
+def test_relacao_que_passaria_de_100_e_recusada_antes_do_patch():
+    from notion_starter.exceptions import NotionSyncError
+    from notion_starter.services.relacoes import RelacaoGrandeDemaisError
+
+    cliente = RelacaoGrande(100)
+
+    with pytest.raises(RelacaoGrandeDemaisError) as erro:
+        relacionar("pagina-a", "nova", "Relacionadas", cliente=cliente)
+
+    assert cliente.patches == []
+    assert isinstance(erro.value, NotionSyncError) and isinstance(erro.value, ValueError)
+    assert erro.value.tamanho == 101

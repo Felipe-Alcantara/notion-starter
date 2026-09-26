@@ -961,7 +961,7 @@ class NotionClient:
             idempotente=True,
         )
 
-    def ler_propriedade(self, page_id: str, property_id: str) -> list[dict[str, Any]]:
+    def ler_itens_de_propriedade(self, page_id: str, property_id: str) -> list[dict[str, Any]]:
         """Lê o valor **completo** de uma propriedade, percorrendo a paginação.
 
         ``GET /pages/{id}`` corta propriedades longas: numa ``relation`` vêm no
