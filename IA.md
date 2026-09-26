@@ -630,3 +630,61 @@ próximo release da CLI, senão `notion-automacoes[app]` não resolve (a CLI exi
 **Validação.** `ruff check .` limpo e `python -m pytest` verde (562 testes);
 o teste de versão falha se só um dos dois números subir (conferido trocando o
 `__version__` de volta para `0.3.1`).
+
+---
+
+## [2026-09-26] Ênfase e HTML do conversor Markdown: o que não é marcação fica como texto
+
+Registro gravado em 2026-09-26 às 12:28 (-03).
+
+**O que estava errado (medido).** Duas perdas de texto na escrita, as duas
+vistas em páginas reais escritas pela CLI:
+
+- O parser inline casava qualquer par de marcadores. Por isso
+  `FELIXO_UPDATE_PRERELEASE` virava "FELIXO" + itálico "UPDATE" + "PRERELEASE",
+  `snake_case_name` perdia os `_`, e `2 * 3 * 4` e `a ** b ** c` perdiam os `*`.
+- A limpeza de HTML (`_RE_TAG = <[^>]+>`) rodava antes das crases. Com isso
+  `DATABASE_URL=<banco descartável migrado>` e `@<versão>` sumiam até dentro de
+  código inline, e o mesmo valia para `a < b e c > d` e autolinks. O
+  `html.unescape` ainda decodificava entidade sem `;` (`&copy=1` numa URL virava
+  "©=1").
+
+**Decisão: correção mínima.**
+
+- Escrita:
+  - um marcador não abre antes de espaço nem fecha depois de espaço;
+  - `_` não abre nem fecha colado a letra ou dígito;
+  - a vizinhança é a da corrida inteira de marcadores (`***`).
+- A regra de pontuação do CommonMark ficou de fora de propósito. Ela deixaria
+  sem negrito, na releitura, os trechos formatados colados em pontuação, como
+  `Campo **(opcional)**obrigatório` e texto CJK, que a 0.4.0 aceitava.
+- Leitura: o espaço da ponta fica fora dos marcadores (`**Nota:** `), que é o
+  que a escrita nova relê como negrito.
+- HTML: nada entre crases é tocado. Só tags de elementos HTML são removidas;
+  `<versão>`, `<id>` e `<nome>` ficam. `<https://...>` vira link, e só
+  entidades com `;` são decodificadas.
+
+**Tentativa anterior, descartada.** Uma primeira versão reescreveu o conversor
+inteiro (pilha de delimitadores do CommonMark, escape na leitura, DOCX), com
++1228 linhas em `content.py`. Duas rodadas de revisão adversarial acharam 20
+problemas cada, entre eles leitura de parágrafo de 0,7 ms para 9,5 s, busca
+`contendo` quebrada pelo escape e `RecursionError`. Não convergia, e ela ficou
+fora do repositório.
+
+**Validação.**
+
+- `ruff check .` limpo e `python -m pytest` verde (590 testes).
+- 28 testes novos em `tests/test_content_marcacao.py`; 16 deles falham na 0.4.0.
+- Diferencial automático contra a 0.4.0, com corpus de semente fixa:
+  - ida e volta fiel em 2326 de 4000 parágrafos gerados, contra 1684: 663
+    melhoras e 21 regressões;
+  - escrita igual ao markdown-it 4.2 (CommonMark + tachado) em 3603 de 4000
+    textos, contra 3238, sem nenhuma regressão;
+  - textos que perdem caracteres visíveis: de 692 para 328;
+  - tempo linear, com 0,19 s para uma linha de 15 mil caracteres.
+
+**Limitação conhecida.** As 21 regressões de ida e volta são todas trechos
+formatados cujo conteúdo começa ou termina com o próprio marcador (um tachado de
+"~", um itálico de "*x"). Sem escape com barra, que a biblioteca não tem, esse
+caso não tem Markdown que o releia. A 0.4.0 acertava por acaso, porque aceitava
+qualquer par.
