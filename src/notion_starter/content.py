@@ -39,7 +39,13 @@ from .constants import (
     MAX_RICH_TEXT,
     MAX_URL_LINK,
 )
-from .exceptions import ConteudoInvalidoError, RichTextNaoRegravavelError
+from .exceptions import (
+    ConteudoInvalidoError,
+    RichTextNaoRegravavelError,
+    TrechoAmbiguoError,
+    TrechoAtravessaItensError,
+    TrechoNaoEncontradoError,
+)
 from .utils import fatiar_utf16
 
 # Tipos de bloco do Notion que carregam *rich text* num campo de mesmo nome.
@@ -1047,3 +1053,130 @@ def planejar_lotes(blocos: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     if atual:
         lotes.append(atual)
     return lotes
+
+
+# -- Edição de rich text sem passar por Markdown ---------------------------------------
+
+
+def _texto_visivel(item: dict[str, Any]) -> str:
+    """O texto que o item mostra na página (inclusive de menção e equação)."""
+
+    if item.get("plain_text") is not None:
+        return str(item.get("plain_text") or "")
+    if item.get("type") == "equation":
+        return str((item.get("equation") or {}).get("expression", ""))
+    texto = item.get("text")
+    return str(texto.get("content", "")) if isinstance(texto, dict) else ""
+
+
+def texto_de_rich_text(itens: list[dict[str, Any]]) -> str:
+    """O texto puro de um *rich text*, como aparece na página."""
+
+    return "".join(_texto_visivel(item) for item in itens if isinstance(item, dict))
+
+
+def rich_text_de_codigo(texto: str) -> list[dict[str, Any]]:
+    """*Rich text* de um bloco de código: texto cru, fatiado em 2000 caracteres."""
+
+    return _codigo_inline(texto)
+
+
+def perdas_de_formatacao(itens: list[dict[str, Any]]) -> list[str]:
+    """O que reescrever este *rich text* a partir de Markdown perderia.
+
+    O par Markdown desta lib representa negrito, itálico, tachado, código e
+    link. Menção (página, data, usuário, emoji…) vira texto ou link comum;
+    equação vira texto; sublinhado e cor (de texto ou de fundo) somem; ênfase
+    dentro de código também. Cada perda vem descrita com o trecho afetado.
+    """
+
+    perdas: list[str] = []
+    for item in itens:
+        if not isinstance(item, dict):
+            continue
+        trecho = _texto_visivel(item)
+        tipo = item.get("type")
+        if tipo == "mention":
+            mencao = item.get("mention") or {}
+            perdas.append(f"menção de {mencao.get('type', '?')} '{trecho}'")
+        elif tipo == "equation":
+            perdas.append(f"equação '{trecho}'")
+        anot = item.get("annotations") or {}
+        if anot.get("underline"):
+            perdas.append(f"sublinhado em '{trecho}'")
+        cor = anot.get("color")
+        if cor and cor != "default":
+            perdas.append(f"cor '{cor}' em '{trecho}'")
+        if anot.get("code") and any(anot.get(k) for k in ("bold", "italic", "strikethrough")):
+            perdas.append(f"ênfase dentro de código em '{trecho}'")
+    return perdas
+
+
+def trocar_trecho_rich_text(
+    itens: list[dict[str, Any]],
+    antigo: str,
+    novo: str,
+    *,
+    todas: bool = False,
+    block_id: str = "",
+) -> tuple[list[dict[str, Any]], int]:
+    """Troca ``antigo`` por ``novo`` **dentro** dos itens de texto, sem tocar no resto.
+
+    É a edição que preserva o que o Markdown não representa: as anotações
+    (cor, sublinhado…) e o link de cada item ficam como estavam, e menções e
+    equações são reenviadas intactas (no formato de requisição, ver
+    :func:`item_para_requisicao`). Itens que passem de 2000 caracteres depois
+    da troca são fatiados com a mesma formatação.
+
+    Args:
+        itens: O *rich text* lido do bloco.
+        antigo: Trecho a procurar (não vazio).
+        novo: Texto que entra no lugar.
+        todas: Troca todas as ocorrências; sem isso, exige exatamente uma.
+        block_id: Só para as mensagens de erro.
+
+    Returns:
+        ``(rich_text_novo, ocorrências_trocadas)``.
+
+    Raises:
+        ValueError: ``antigo`` vazio.
+        TrechoNaoEncontradoError: O trecho não aparece.
+        TrechoAtravessaItensError: Aparece cruzando itens ou dentro de
+            menção/equação.
+        TrechoAmbiguoError: Aparece mais de uma vez sem ``todas``.
+        RichTextNaoRegravavelError: O bloco tem item que não se regrava.
+        ConteudoInvalidoError: O resultado passaria de 100 itens.
+    """
+
+    if not antigo:
+        raise ValueError("Informe o trecho a trocar.")
+    completo = texto_de_rich_text(itens)
+    total = completo.count(antigo)
+    if total == 0:
+        raise TrechoNaoEncontradoError(block_id, antigo, completo)
+    por_item = [
+        str(item["text"].get("content", "")).count(antigo)
+        if item.get("type", "text") == "text" and isinstance(item.get("text"), dict)
+        else 0
+        for item in itens
+    ]
+    dentro = sum(por_item)
+    if dentro < total:
+        raise TrechoAtravessaItensError(block_id, antigo)
+    if dentro > 1 and not todas:
+        raise TrechoAmbiguoError(block_id, antigo, dentro)
+
+    resultado: list[dict[str, Any]] = []
+    for item, ocorrencias in zip(itens, por_item, strict=True):
+        convertido = item_para_requisicao(item)
+        if not ocorrencias:
+            resultado.append(convertido)
+            continue
+        convertido["text"]["content"] = convertido["text"]["content"].replace(antigo, novo)
+        if convertido["text"]["content"]:
+            resultado.extend(_fatiar_item(convertido))
+    if len(resultado) > MAX_ITENS_ARRAY:
+        raise ConteudoInvalidoError(
+            [f"o texto ficaria com {len(resultado)} trechos (máximo {MAX_ITENS_ARRAY})"]
+        )
+    return resultado, dentro

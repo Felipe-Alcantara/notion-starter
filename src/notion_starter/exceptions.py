@@ -176,6 +176,127 @@ class LimpezaIncompletaError(NotionSyncError):
         super().__init__(mensagem)
 
 
+class EdicaoDeBlocoError(NotionSyncError, ValueError):
+    """Base das recusas de edição de um bloco — levantadas **antes** do PATCH.
+
+    Deriva também de ``ValueError`` para as bordas que já tratavam entrada
+    inválida por esse tipo (código 2 na CLI, erro de ferramenta no MCP).
+    """
+
+
+class EdicaoMultiblocoError(EdicaoDeBlocoError):
+    """O Markdown gerou mais de um bloco, mas a edição troca **um** bloco.
+
+    Attributes:
+        quantidade: Quantos blocos o Markdown gerou.
+    """
+
+    def __init__(self, quantidade: int) -> None:
+        self.quantidade = quantidade
+        super().__init__(
+            f"editar_bloco edita UM bloco, mas o Markdown gerou {quantidade} blocos; nada "
+            "foi alterado. Mande uma linha só, ou edite este bloco e insira os demais "
+            "depois dele com escrever_conteudo(..., apos_bloco_id=<id deste bloco>)."
+        )
+
+
+class BlocoSemTextoError(EdicaoDeBlocoError):
+    """O bloco não tem ``rich_text`` para editar (imagem, divisória, subpágina…).
+
+    Attributes:
+        tipo: Tipo do bloco.
+    """
+
+    def __init__(self, block_id: str, tipo: str) -> None:
+        self.tipo = tipo
+        dica = (
+            " Para renomear subpágina ou database, edite o título da página/database."
+            if tipo in ("child_page", "child_database")
+            else ""
+        )
+        super().__init__(
+            f"O bloco {block_id} é do tipo '{tipo}', que não tem texto editável.{dica}"
+        )
+
+
+class TrocaDeTipoError(EdicaoDeBlocoError):
+    """O Markdown pede outro tipo de bloco; a API não troca o tipo de um bloco existente.
+
+    Attributes:
+        tipo_atual: Tipo do bloco no Notion.
+        tipo_pedido: Tipo que o Markdown descreve.
+    """
+
+    def __init__(self, block_id: str, tipo_atual: str, tipo_pedido: str) -> None:
+        self.tipo_atual = tipo_atual
+        self.tipo_pedido = tipo_pedido
+        super().__init__(
+            f"O bloco {block_id} é '{tipo_atual}', mas o Markdown descreve '{tipo_pedido}'; "
+            "a API do Notion não troca o tipo de um bloco (\"Block type mismatch\"). "
+            "Mande o texto sem o prefixo (ele mantém o tipo atual), ou apague o bloco e "
+            "escreva um novo no lugar."
+        )
+
+
+class PerdaDeFormatacaoError(EdicaoDeBlocoError):
+    """Reescrever o bloco a partir de Markdown apagaria o que o Markdown não representa.
+
+    Markdown não guarda menção (de página, data, usuário), equação, sublinhado
+    nem cor — a edição por Markdown troca o *rich text* inteiro e os perderia.
+
+    Attributes:
+        perdas: Uma descrição por item que seria perdido.
+    """
+
+    def __init__(self, block_id: str, perdas: list[str]) -> None:
+        self.perdas = list(perdas)
+        lista = "; ".join(self.perdas[:8])
+        if len(self.perdas) > 8:
+            lista += f"; e mais {len(self.perdas) - 8}"
+        super().__init__(
+            f"Editar o bloco {block_id} por Markdown perderia: {lista}. Nada foi "
+            "alterado. Para mudar só um trecho mantendo o resto, use trocar_trecho; "
+            "para reescrever mesmo assim, passe aceitar_perda_de_formatacao=True."
+        )
+
+
+class TrechoError(EdicaoDeBlocoError):
+    """Base das recusas de :func:`~notion_starter.services.conteudo.trocar_trecho`."""
+
+
+class TrechoNaoEncontradoError(TrechoError):
+    """O trecho não aparece no texto do bloco."""
+
+    def __init__(self, block_id: str, trecho: str, texto_atual: str) -> None:
+        self.trecho = trecho
+        amostra = texto_atual if len(texto_atual) <= 200 else texto_atual[:199] + "…"
+        super().__init__(
+            f"O trecho '{trecho}' não está no bloco {block_id}. Texto atual: '{amostra}'."
+        )
+
+
+class TrechoAmbiguoError(TrechoError):
+    """O trecho aparece mais de uma vez e não foi pedido trocar todas."""
+
+    def __init__(self, block_id: str, trecho: str, ocorrencias: int) -> None:
+        self.ocorrencias = ocorrencias
+        super().__init__(
+            f"O trecho '{trecho}' aparece {ocorrencias} vezes no bloco {block_id}; peça "
+            "para trocar todas ou use um trecho mais longo."
+        )
+
+
+class TrechoAtravessaItensError(TrechoError):
+    """O trecho cruza formatações diferentes, ou fica dentro de menção/equação."""
+
+    def __init__(self, block_id: str, trecho: str) -> None:
+        super().__init__(
+            f"O trecho '{trecho}' no bloco {block_id} atravessa formatações diferentes ou "
+            "fica dentro de uma menção/equação, onde não dá para trocar texto sem perder a "
+            "formatação. Use um trecho que fique dentro de um só pedaço de texto."
+        )
+
+
 class NotionHTTPError(NotionAPIError):
     """Resposta HTTP de erro retornada pela API do Notion.
 

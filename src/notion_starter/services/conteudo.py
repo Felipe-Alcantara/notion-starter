@@ -25,14 +25,24 @@ from notion_starter import (
     blocos_para_markdown,
     markdown_para_blocos,
 )
-from notion_starter.content import planejar_lotes, validar_blocos
+from notion_starter.content import (
+    perdas_de_formatacao,
+    planejar_lotes,
+    rich_text_de_codigo,
+    trocar_trecho_rich_text,
+    validar_blocos,
+)
 from notion_starter.exceptions import (
+    BlocoSemTextoError,
+    EdicaoMultiblocoError,
     EscritaAbaixoDeDatabaseError,
     EscritaParcialError,
     LimpezaIncompletaError,
     NotionConnectionError,
     NotionHTTPError,
     NotionSyncError,
+    PerdaDeFormatacaoError,
+    TrocaDeTipoError,
 )
 
 # Tamanho do trecho de texto mostrado ao listar blocos. O bastante para
@@ -808,17 +818,41 @@ def editar_bloco(
     block_id: str,
     markdown: str,
     *,
+    conferir_atual: bool = False,
+    aceitar_perda_de_formatacao: bool = False,
     cliente: NotionClient | None = None,
 ) -> dict[str, Any]:
-    """Substitui o texto de um bloco existente por uma linha de Markdown.
+    """Substitui o texto de **um** bloco existente por Markdown.
 
-    A API do Notion edita um bloco de cada vez; por isso o ``markdown`` aqui
-    representa **um** bloco (a primeira linha não vazia). Para reescrever várias
-    linhas, apague e escreva de novo.
+    A API edita um bloco de cada vez, então o ``markdown`` precisa gerar
+    exatamente um bloco: várias linhas eram truncadas em silêncio para a
+    primeira, e agora são recusadas (:class:`EdicaoMultiblocoError`) sem
+    nenhuma chamada à API. Um bloco de código cercado por crases, mesmo com
+    várias linhas, é um bloco só.
+
+    Com ``conferir_atual=True`` o bloco é lido antes (``GET /blocks/{id}``) e:
+
+    - texto **sem prefixo** de bloco mantém o tipo atual (um heading, callout,
+      toggle ou to-do continua sendo o que era; sem isso, o texto puro virava
+      ``paragraph`` e a API respondia 400 "Block type mismatch");
+    - prefixo de **outro** tipo é recusado (:class:`TrocaDeTipoError`) — a API
+      não troca o tipo de um bloco;
+    - num bloco de código, o texto inteiro é o código (sem parse de Markdown);
+    - se o texto atual tiver o que Markdown não representa (menção, equação,
+      sublinhado, cor), a edição é recusada com a lista do que seria perdido
+      (:class:`PerdaDeFormatacaoError`), a menos que
+      ``aceitar_perda_de_formatacao`` seja verdadeiro. Para mudar só um
+      trecho preservando o resto, use :func:`trocar_trecho`.
+
+    Sem ``conferir_atual`` (padrão, compatível com quem já chama) não há
+    leitura: o tipo sai do Markdown, como antes.
 
     Args:
         block_id: ID do bloco a editar.
-        markdown: Nova linha de conteúdo, em Markdown.
+        markdown: O novo conteúdo do bloco, em Markdown (um bloco).
+        conferir_atual: Lê o bloco antes e aplica as proteções acima.
+        aceitar_perda_de_formatacao: Com ``conferir_atual``, grava mesmo que
+            menções/cores/sublinhado se percam.
         cliente: Cliente Notion opcional (injeção para testes/uso alternativo).
 
     Returns:
@@ -826,14 +860,129 @@ def editar_bloco(
 
     Raises:
         ValueError: Se ``markdown`` não gerar nenhum bloco.
+        EdicaoMultiblocoError: O Markdown gerou mais de um bloco.
+        BlocoSemTextoError: (``conferir_atual``) O bloco não tem texto.
+        TrocaDeTipoError: (``conferir_atual``) O Markdown pede outro tipo.
+        PerdaDeFormatacaoError: (``conferir_atual``) A edição perderia
+            menção, equação, sublinhado ou cor.
     """
 
     blocos = markdown_para_blocos(markdown)
     if not blocos:
         raise ValueError("O conteúdo está vazio — nada a editar.")
-    novo = blocos[0]
-    tipo = novo["type"]
-    return (cliente or _cliente_padrao()).atualizar_bloco(block_id, {tipo: novo[tipo]})
+    cli = cliente or _cliente_padrao()
+    if not conferir_atual:
+        if len(blocos) != 1:
+            raise EdicaoMultiblocoError(len(blocos))
+        novo = blocos[0]
+        tipo = novo["type"]
+        return cli.atualizar_bloco(block_id, {tipo: novo[tipo]})
+
+    atual = cli.obter_bloco(block_id)
+    tipo_atual = str(atual.get("type", ""))
+    corpo_atual = atual.get(tipo_atual)
+    if not isinstance(corpo_atual, dict) or "rich_text" not in corpo_atual:
+        raise BlocoSemTextoError(block_id, tipo_atual)
+
+    corpo: dict[str, Any]
+    if tipo_atual == "code":
+        cercado = len(blocos) == 1 and blocos[0]["type"] == "code"
+        texto = markdown.strip("\n")
+        corpo = {
+            "rich_text": blocos[0]["code"]["rich_text"] if cercado else rich_text_de_codigo(texto)
+        }
+    else:
+        if len(blocos) != 1:
+            raise EdicaoMultiblocoError(len(blocos))
+        novo = blocos[0]
+        tipo_pedido = str(novo["type"])
+        # Texto puro vira "paragraph" no Markdown: sem prefixo, vale o tipo atual.
+        if tipo_pedido != "paragraph" and tipo_pedido != tipo_atual:
+            raise TrocaDeTipoError(block_id, tipo_atual, tipo_pedido)
+        corpo = {"rich_text": novo[tipo_pedido]["rich_text"]}
+        if tipo_pedido == "to_do":
+            corpo["checked"] = novo["to_do"]["checked"]
+
+    if not aceitar_perda_de_formatacao:
+        perdas = perdas_de_formatacao(corpo_atual.get("rich_text") or [])
+        if perdas:
+            raise PerdaDeFormatacaoError(block_id, perdas)
+    return cli.atualizar_bloco(block_id, {tipo_atual: corpo})
+
+
+@dataclass
+class ResultadoTroca:
+    """O que :func:`trocar_trecho` gravou.
+
+    Attributes:
+        id: ID do bloco.
+        tipo: Tipo do bloco (não muda).
+        ocorrencias: Quantas ocorrências foram trocadas.
+        markdown: O bloco como ficou, lido da resposta do PATCH.
+        editado_em: ``last_edited_time`` da resposta (a API arredonda ao minuto,
+            observado — não serve para ordenar edições do mesmo minuto).
+    """
+
+    id: str
+    tipo: str
+    ocorrencias: int
+    markdown: str
+    editado_em: str
+
+
+def trocar_trecho(
+    block_id: str,
+    antigo: str,
+    novo: str,
+    *,
+    todas: bool = False,
+    cliente: NotionClient | None = None,
+) -> ResultadoTroca:
+    """Troca um trecho do texto de um bloco **sem reescrever** o resto.
+
+    Lê o bloco, troca ``antigo`` por ``novo`` só dentro dos pedaços de texto
+    e grava o *rich text* inteiro de volta (a API substitui o campo todo),
+    com cada anotação, link, menção e equação como estavam. É o caminho para
+    corrigir um horário num título colorido ou um nome num parágrafo com
+    menção de data, que a edição por Markdown destruiria. Os demais campos do
+    bloco (cor, ``checked``, linguagem) não são enviados e ficam intactos.
+
+    Args:
+        block_id: ID do bloco.
+        antigo: Trecho a procurar.
+        novo: Texto que entra no lugar.
+        todas: Troca todas as ocorrências; sem isso, exige exatamente uma.
+        cliente: Cliente Notion opcional (injeção para testes/uso alternativo).
+
+    Returns:
+        Um :class:`ResultadoTroca`.
+
+    Raises:
+        BlocoSemTextoError: O bloco não tem texto.
+        TrechoNaoEncontradoError, TrechoAmbiguoError, TrechoAtravessaItensError:
+            Ver :func:`~notion_starter.content.trocar_trecho_rich_text`.
+        RichTextNaoRegravavelError: O bloco tem item que a API não aceita de
+            volta (ex.: menção de prévia de link).
+    """
+
+    cli = cliente or _cliente_padrao()
+    atual = cli.obter_bloco(block_id)
+    tipo = str(atual.get("type", ""))
+    corpo = atual.get(tipo)
+    if not isinstance(corpo, dict) or "rich_text" not in corpo:
+        raise BlocoSemTextoError(block_id, tipo)
+    novos, ocorrencias = trocar_trecho_rich_text(
+        corpo.get("rich_text") or [], antigo, novo, todas=todas, block_id=block_id
+    )
+    resposta = cli.atualizar_bloco(block_id, {tipo: {"rich_text": novos}})
+    lido = resposta if isinstance(resposta, dict) and resposta.get("type") else {}
+    return ResultadoTroca(
+        id=block_id,
+        tipo=tipo,
+        ocorrencias=ocorrencias,
+        markdown=blocos_para_markdown([lido]) if lido else "",
+        editado_em=str(lido.get("last_edited_time") or ""),
+    )
 
 
 def excluir_bloco(
