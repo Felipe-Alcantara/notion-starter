@@ -157,9 +157,9 @@ Para outro tipo de coluna, passe um `montar_propriedade`, como
 python -m pip install "notion-starter>=0.4.0,<0.5.0"
 ```
 
-O release `0.4.0` será publicado no [PyPI](https://pypi.org/project/notion-starter/)
-como wheel e sdist; até lá, o PyPI serve `0.3.1`, que ainda não tem as APIs de
-escrita segura, IDs e exceções da auditoria de 2026-09-25. Ele não depende de checkout Git e não instala Django, React
+O release `0.4.1` é publicado no [PyPI](https://pypi.org/project/notion-starter/)
+como wheel e sdist; ele corrige o conversor Markdown da `0.4.0`, com as mesmas
+APIs. Ele não depende de checkout Git e não instala Django, React
 ou a CLI. Para operar o produto completo, use
 [`notion-automacoes[app]`](https://pypi.org/project/notion-automacoes/).
 

@@ -14,11 +14,11 @@
 
 ## 📊 ESTADO ATUAL (RESUMO VIVO)
 
-Última atualização: [2026-09-08]
+Última atualização: [2026-09-26]
 
-- Fase: biblioteca base estável, publicada como pacote `notion-starter==0.3.1`
-  para a distribuição da CLI única.
-- Qualidade: 373 testes verdes e `ruff` limpo; CI cobre Python 3.10–3.13.
+- Fase: biblioteca base estável, publicada como pacote `notion-starter==0.4.1`
+  (correção do conversor Markdown sobre a `0.4.0`) para a distribuição da CLI única.
+- Qualidade: 590 testes verdes e `ruff` limpo; CI cobre Python 3.10–3.13.
 - Documentação: README alinhado ao Felixo System Design e contrato de qualidade
   centralizado em `QUALIDADE.md`.
 - Próximos passos abertos: mais tipos de propriedade/bloco e escrita em data
@@ -688,3 +688,10 @@ formatados cujo conteúdo começa ou termina com o próprio marcador (um tachado
 "~", um itálico de "*x"). Sem escape com barra, que a biblioteca não tem, esse
 caso não tem Markdown que o releia. A 0.4.0 acertava por acaso, porque aceitava
 qualquer par.
+
+### Release 0.4.1
+
+**Decisão.** Patch (`0.4.0` → `0.4.1`): só corrige o conversor, sem API nova
+nem mudança de contrato. As faixas `>=0.4.0,<0.5.0` da CLI e do app já aceitam
+a versão, então nenhum dos dois precisa de release para receber a correção. A
+tag `v0.4.1` leva ao PyPI pelo `release.yml`.

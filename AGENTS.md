@@ -3,9 +3,10 @@
 Biblioteca Python **base** do ecossistema [Automações do Notion](https://github.com/Felipe-Alcantara/Automa-es-do-Notion) — o hub tem o roteamento completo entre módulos; leia-o se a tarefa envolver o CLI ou o app.
 
 O pacote público é [`notion-starter`](https://pypi.org/project/notion-starter/).
-O código está em `0.4.0`, com release pendente; até a tag `v0.4.0` ser publicada,
-o PyPI serve `0.3.1`, sem as APIs da auditoria de 2026-09-25 que a CLI já usa.
-Publique o starter **antes** de subir a CLI que exige `>=0.4.0`. Ele é uma
+O código está em `0.4.1` (correção do conversor Markdown; a tag `v0.4.1` publica no
+PyPI). A CLI e o app aceitam `>=0.4.0,<0.5.0`, então recebem a correção sem
+novo release deles. API pública nova sai em versão nova **antes** de um
+consumidor depender dela. Ele é uma
 biblioteca importável, não possui `start_app.py`
 nem entry point de CLI; a fachada de uso é `notion-automacoes` no módulo CLI.
 
