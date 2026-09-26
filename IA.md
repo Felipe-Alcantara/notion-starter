@@ -695,3 +695,66 @@ qualquer par.
 nem mudança de contrato. As faixas `>=0.4.0,<0.5.0` da CLI e do app já aceitam
 a versão, então nenhum dos dois precisa de release para receber a correção. A
 tag `v0.4.1` leva ao PyPI pelo `release.yml`.
+
+---
+
+## [2026-09-26] Revisão adversarial da 0.4.1: delimitadores do CommonMark e leitura por trechos
+
+Registro gravado em 2026-09-26 às 13:33 (-03), antes da publicação da `0.4.1`.
+
+**O que a revisão achou (3 lentes, cada achado com um cético).** A correção
+registrada na entrada anterior tinha dois defeitos confirmados, e um terceiro
+foi refutado como bloqueante, mas corrigido mesmo assim.
+
+- **Ênfase aninhada do mesmo caractere.** `*Nota: o **CI** falhou*` deixava
+  asteriscos visíveis; a 0.4.0 dava texto limpo. Casos reais:
+  - `Trabalho2_MNIST.md:113`;
+  - o README do `form-data`;
+  - duas leituras da 0.4.0 com negrito em volta de código.
+- **Tempo quadrático** numa linha com muitos marcadores sem par: `*a ` repetido
+  5000 vezes levava 31 s, contra 0,13 s na 0.4.0; uma lista de globs de 7 KB
+  levava 1,15 s. A frase "tempo linear" da entrada anterior valia só para o
+  corpus sintético medido lá.
+- **Colisão** dos marcadores internos da limpeza de HTML (U+E000/U+E001) com um
+  texto que já os tivesse, ou com `&#57344;`: `IndexError`.
+
+**Decisão.** As correções pontuais sugeridas conflitavam entre si. O atalho de
+desempenho quebrava `*a *b* c`. Por isso a ênfase passou a ser casada pelo
+"process emphasis" do CommonMark (`_casar_delimitadores`):
+
+- a linha vira nós (texto, código, link, imagem e corridas de marcadores);
+- cada fechamento procura para trás a abertura mais próxima;
+- valem a regra do 3 e o `openers_bottom`, que deixa a busca linear;
+- o flanqueamento continua o simplificado, sem a regra de pontuação;
+- o link recebe o rótulo já parseado, e o `_aplicar_link`, que marcava pelo
+  tamanho do texto, saiu.
+
+Os marcadores do HTML passaram a ser caracteres ausentes da linha. A leitura
+passou a juntar vizinhos de mesma formatação (`**ab**` em vez de
+`**a****b**`).
+
+**Validação.**
+
+- 603 testes verdes e `ruff` limpo. Os testes novos (aninhada, linhas longas,
+  colisão e vizinhos) falham no commit anterior; aquela suíte levava 60 s por
+  causa dos casos quadráticos.
+- **Corpus real** de 10.128 linhas (hub, repositórios do Felipe e leituras
+  reais): 9.997 iguais ao markdown-it, contra 9.834 na 0.4.0 e 9.979 na versão
+  anterior, **sem nenhuma linha pior** que nas duas.
+- **Sintético** (semente fixa): ida e volta fiel em 3.091 de 4.000 parágrafos
+  (1.684 na 0.4.0) e escrita igual ao markdown-it em 3.829 de 4.000 (3.238).
+- **Desempenho:** `*a ` x 5000 leva 0,01 s, e uma linha de 15 mil caracteres,
+  0,10 s.
+
+**Limitações conhecidas (atualiza a entrada anterior).** 37 dos 4.000
+parágrafos sintéticos que a 0.4.0 devolvia igual não voltam iguais:
+
+- 27 são trechos formatados que começam ou terminam com o próprio marcador;
+- os demais são trechos de formatações **diferentes** colados sem espaço
+  (negrito seguido de itálico).
+
+A escrita difere da 0.4.0 em 26 sequências sintéticas de marcadores com
+pontuação (como `*1**(`), em que só a regra de pontuação, deixada de fora de
+propósito, mudaria o resultado; nas linhas reais foram zero. Markdown gerado
+pelo leitor da 0.4.0 com espaço dentro do marcador (`**Nota: **`) não vira
+mais negrito: basta reler a página com a 0.4.1.
