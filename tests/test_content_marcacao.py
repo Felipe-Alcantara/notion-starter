@@ -70,13 +70,45 @@ def test_enfase_valida_continua_funcionando(markdown, esperado):
     assert _formatados(markdown) == esperado
 
 
-def test_corrida_longa_de_marcadores_e_linear_e_nao_perde_texto():
-    texto = "*" * 5000 + "Atenção" + "*" * 5000
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "*a " * 5000,
+        "_a _" * 3000,
+        "~~a " * 4000,
+        ", ".join(["*.pyc", "*.log", "*.tmp"] * 400),
+        '[{"_id": 1, "_score": 0.5}, ' * 300 + "]",
+        " ".join(["**Nota: **texto"] * 300),
+    ],
+)
+def test_linha_longa_de_marcadores_sem_par_e_linear_e_fica_literal(texto):
     inicio = time.perf_counter()
-    conteudo = "".join(i["text"]["content"] for i in _itens(texto))
+    itens = _itens(texto)
     assert time.perf_counter() - inicio < 1.0
-    assert conteudo.count("Atenção") == 1
-    assert len(conteudo) >= len(texto) - 4  # só o par que envolve "Atenção" é consumido
+    assert "".join(i["text"]["content"] for i in itens) == texto.strip()
+
+
+def test_corridas_longas_casam_inteiras_como_no_commonmark():
+    inicio = time.perf_counter()
+    assert _formatados("*" * 5000 + "Atenção" + "*" * 5000) == {"Atenção": {"bold"}}
+    assert time.perf_counter() - inicio < 1.0
+
+
+@pytest.mark.parametrize(
+    ("markdown", "esperado"),
+    [
+        ("*Nota: o **CI** falhou.*", {"Nota: o ": {"italic"}, "CI": {"bold", "italic"},
+                                      " falhou.": {"italic"}}),
+        ("_Obs: __isto__ é sério_", {"Obs: ": {"italic"}, "isto": {"bold", "italic"},
+                                     " é sério": {"italic"}}),
+        ("**Aviso: *leia* isto**", {"Aviso: ": {"bold"}, "leia": {"bold", "italic"},
+                                    " isto": {"bold"}}),
+        ("***x***", {"x": {"bold", "italic"}}),
+        ("*a **b c*", {"b c": {"italic"}}),  # o fechamento casa com a abertura mais próxima
+    ],
+)
+def test_enfase_aninhada_do_mesmo_caractere(markdown, esperado):
+    assert _formatados(markdown) == esperado
 
 
 # -- Leitura: ida e volta ----------------------------------------------------

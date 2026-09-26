@@ -274,18 +274,6 @@ def rich_text_para_requisicao(itens: list[dict[str, Any]]) -> list[dict[str, Any
     return [item_para_requisicao(item) for item in itens if isinstance(item, dict)]
 
 
-# Marcadores de ênfase, do mais longo para o mais curto (a ordem evita que ``*``
-# capture o que pertence a ``**``). Cada um liga uma anotação do Notion.
-_ENFASE = (
-    ("**", "bold"),
-    ("__", "bold"),
-    ("~~", "strikethrough"),
-    ("*", "italic"),
-    ("_", "italic"),
-    ("`", "code"),
-)
-
-
 def _parse_inline(texto: str) -> list[dict[str, Any]]:
     """Tokeniza uma linha de Markdown em itens de *rich text*.
 
@@ -305,86 +293,234 @@ def _parse_inline_em(
     annotations: dict[str, bool],
     itens: list[dict[str, Any]],
 ) -> None:
-    """Acrescenta a ``itens`` os tokens de ``texto`` sob as ``annotations`` ativas."""
+    """Acrescenta a ``itens`` os tokens de ``texto`` sob as ``annotations`` ativas.
 
+    Separa código, links e corridas de marcadores; casa as corridas pelo
+    algoritmo de delimitadores do CommonMark (:func:`_casar_delimitadores`); o
+    que sobra de cada corrida vira texto.
+    """
+
+    nos = _tokenizar_inline(texto)
+    extras = _anotacoes_por_no(nos, _casar_delimitadores(nos))
+    buffer: list[str] = []
+    atual: dict[str, bool] = {}
+    for no, extra in zip(nos, extras, strict=True):
+        anotacoes = {**annotations, **extra}
+        tipo = no["tipo"]
+        if tipo in ("texto", "delim"):
+            conteudo = no["texto"] if tipo == "texto" else no["caractere"] * no["resto"]
+            if conteudo:
+                if buffer and anotacoes != atual:
+                    itens.append(_item_texto("".join(buffer), annotations=atual or None))
+                    buffer.clear()
+                atual = anotacoes
+                buffer.append(conteudo)
+            continue
+        if buffer:
+            itens.append(_item_texto("".join(buffer), annotations=atual or None))
+            buffer.clear()
+        if tipo == "codigo":
+            itens.append(_item_texto(no["texto"], annotations={**anotacoes, "code": True}))
+        elif tipo == "imagem":
+            # Imagem inline dentro de texto: vira link (se a URL for válida) com o alt.
+            link = no["url"] if no["valida"] else None
+            alt = no["rotulo"] or no["url"]
+            itens.append(_item_texto(alt, annotations=anotacoes or None, link=link))
+        else:
+            rotulo: list[dict[str, Any]] = []
+            _parse_inline_em(no["rotulo"], anotacoes, rotulo)
+            # Só aplica o link quando a URL é absoluta http(s)/mailto — o Notion
+            # rejeita âncoras (#secao) e caminhos relativos; nesses casos fica só o texto.
+            if no["valida"]:
+                for item in rotulo:
+                    item["text"]["link"] = {"url": no["url"]}
+            itens.extend(rotulo)
+    if buffer:
+        itens.append(_item_texto("".join(buffer), annotations=atual or None))
+
+
+def _tokenizar_inline(texto: str) -> list[dict[str, Any]]:
+    """Quebra ``texto`` em nós: texto, código, link, imagem e corridas de marcadores."""
+
+    nos: list[dict[str, Any]] = []
     buffer: list[str] = []
 
-    def descarregar() -> None:
+    def guardar(no: dict[str, Any]) -> None:
         if buffer:
-            itens.append(_item_texto("".join(buffer), annotations=annotations or None))
+            nos.append({"tipo": "texto", "texto": "".join(buffer)})
             buffer.clear()
+        nos.append(no)
 
     i = 0
     n = len(texto)
     while i < n:
+        caractere = texto[i]
         # Código inline: tudo entre crases é literal (não parseia o interior).
-        if texto[i] == "`":
+        if caractere == "`":
             fim = texto.find("`", i + 1)
             if fim != -1:
-                descarregar()
-                itens.append(
-                    _item_texto(texto[i + 1 : fim], annotations={**annotations, "code": True})
-                )
+                guardar({"tipo": "codigo", "texto": texto[i + 1 : fim]})
                 i = fim + 1
                 continue
-
-        # Link ou imagem: [txt](url) e ![alt](url).
-        consumido = _tentar_link(texto, i, annotations, descarregar, itens)
-        if consumido:
-            i = consumido
+        link = _ler_link(texto, i)
+        if link:
+            guardar(link)
+            i = link["fim"]
             continue
-
-        # Ênfase: **x**, __x__, ~~x~~, *x*, _x_.
-        marcado = _tentar_enfase(texto, i, annotations, descarregar, itens)
-        if marcado:
-            i = marcado
+        if caractere in "*_~":
+            fim = i
+            while fim < n and texto[fim] == caractere:
+                fim += 1
+            # Tachado só com "~~"; outra quantidade de "~" é texto.
+            if caractere != "~" or fim - i == 2:
+                guardar(_corrida(texto, i, fim))
+            else:
+                buffer.append(texto[i:fim])
+            i = fim
             continue
-
-        buffer.append(texto[i])
+        buffer.append(caractere)
         i += 1
+    if buffer:
+        nos.append({"tipo": "texto", "texto": "".join(buffer)})
+    return nos
 
-    descarregar()
 
+def _corrida(texto: str, inicio: int, fim: int) -> dict[str, Any]:
+    """Nó de uma corrida de marcadores e se ela pode abrir e/ou fechar ênfase.
 
-def _tentar_link(
-    texto: str,
-    i: int,
-    annotations: dict[str, bool],
-    descarregar: Any,
-    itens: list[dict[str, Any]],
-) -> int:
-    """Tenta consumir ``[txt](url)`` ou ``![alt](url)`` a partir de ``i``.
-
-    Devolve o índice após o token consumido, ou ``0`` se não houver link aqui.
+    Flanqueamento simplificado do CommonMark: não abre antes de espaço, não
+    fecha depois de espaço, e ``_`` não abre nem fecha colado a letra ou dígito
+    (``snake_case``). A regra de pontuação fica de fora de propósito: ela
+    quebraria a ida e volta de trechos formatados colados em pontuação
+    (``a**(x)**b``, texto CJK). Início ou fim da linha contam como espaço.
     """
+
+    caractere = texto[inicio]
+    antes = texto[inicio - 1] if inicio > 0 else " "
+    depois = texto[fim] if fim < len(texto) else " "
+    abre = not depois.isspace()
+    fecha = not antes.isspace()
+    if caractere == "_":
+        abre = abre and not antes.isalnum()
+        fecha = fecha and not depois.isalnum()
+    return {
+        "tipo": "delim",
+        "caractere": caractere,
+        "tamanho": fim - inicio,
+        "resto": fim - inicio,
+        "abre": abre,
+        "fecha": fecha,
+    }
+
+
+def _casar_delimitadores(nos: list[dict[str, Any]]) -> list[tuple[int, int, str]]:
+    """Casa as corridas de marcadores ("process emphasis" do CommonMark).
+
+    Cada fechamento procura, para trás, a abertura mais próxima do mesmo
+    caractere; as corridas entre as duas viram texto. ``fundo`` guarda até onde
+    já não há abertura para cada tipo de fechamento, o que mantém a busca
+    linear numa linha com muitos marcadores sem par. Devolve ``(abertura,
+    fechamento, anotação)`` com os índices em ``nos``.
+    """
+
+    pilha = [k for k, no in enumerate(nos) if no["tipo"] == "delim"]
+    fundo: dict[tuple[str, bool, int], int] = {}
+    pares: list[tuple[int, int, str]] = []
+    p = 0
+    while p < len(pilha):
+        fecho = nos[pilha[p]]
+        if not fecho["fecha"]:
+            p += 1
+            continue
+        chave = (fecho["caractere"], fecho["abre"], fecho["tamanho"] % 3)
+        q = p - 1
+        while q > fundo.get(chave, -1):
+            abertura = nos[pilha[q]]
+            if abertura["caractere"] == fecho["caractere"] and abertura["abre"]:
+                if not _regra_do_tres_impede(abertura, fecho):
+                    break
+            q -= 1
+        else:
+            fundo[chave] = p - 1
+            if fecho["abre"]:
+                p += 1
+            else:
+                del pilha[p]
+            continue
+        duplo = fecho["caractere"] == "~" or min(abertura["resto"], fecho["resto"]) >= 2
+        usados = 2 if duplo else 1
+        abertura["resto"] -= usados
+        fecho["resto"] -= usados
+        if fecho["caractere"] == "~":
+            anotacao = "strikethrough"
+        else:
+            anotacao = "bold" if usados == 2 else "italic"
+        pares.append((pilha[q], pilha[p], anotacao))
+        del pilha[q + 1 : p]
+        p = q + 1
+        if abertura["resto"] == 0:
+            del pilha[q]
+            p -= 1
+        if fecho["resto"] == 0:
+            del pilha[p]
+    return pares
+
+
+def _regra_do_tres_impede(abertura: dict[str, Any], fecho: dict[str, Any]) -> bool:
+    """Regra do CommonMark que evita casar ``*a**b*`` como ``*a*`` + ``*b*``.
+
+    Quando uma das corridas pode abrir e fechar, a soma dos tamanhos não pode
+    ser múltipla de 3, a menos que os dois tamanhos sejam.
+    """
+
+    if fecho["caractere"] == "~" or not (abertura["fecha"] or fecho["abre"]):
+        return False
+    soma = abertura["tamanho"] + fecho["tamanho"]
+    return soma % 3 == 0 and not (abertura["tamanho"] % 3 == 0 and fecho["tamanho"] % 3 == 0)
+
+
+def _anotacoes_por_no(
+    nos: list[dict[str, Any]], pares: list[tuple[int, int, str]]
+) -> list[dict[str, bool]]:
+    """As anotações de cada nó: as dos pares que o envolvem por inteiro."""
+
+    abertos = {"bold": [0] * (len(nos) + 1), "italic": [0] * (len(nos) + 1),
+               "strikethrough": [0] * (len(nos) + 1)}
+    for abertura, fechamento, anotacao in pares:
+        abertos[anotacao][abertura + 1] += 1
+        abertos[anotacao][fechamento] -= 1
+    extras: list[dict[str, bool]] = []
+    ativos = dict.fromkeys(abertos, 0)
+    for k in range(len(nos)):
+        for anotacao, delta in abertos.items():
+            ativos[anotacao] += delta[k]
+        extras.append({anotacao: True for anotacao, total in ativos.items() if total > 0})
+    return extras
+
+
+def _ler_link(texto: str, i: int) -> dict[str, Any] | None:
+    """Lê ``[txt](url)`` ou ``![alt](url)`` a partir de ``i``; ``None`` se não houver."""
 
     imagem = texto[i] == "!" and texto[i + 1 : i + 2] == "["
     if not imagem and texto[i] != "[":
-        return 0
+        return None
 
     abre = i + 2 if imagem else i + 1
     fecha = texto.find("]", abre)
     if fecha == -1 or texto[fecha + 1 : fecha + 2] != "(":
-        return 0
+        return None
     fim_url = texto.find(")", fecha + 2)
     if fim_url == -1:
-        return 0
+        return None
 
-    rotulo = texto[abre:fecha]
     url = texto[fecha + 2 : fim_url].strip()
-    valida = _url_valida(url)
-    descarregar()
-    if imagem:
-        # Imagem inline dentro de texto: vira link (se a URL for válida) com o alt.
-        link = url if valida else None
-        itens.append(_item_texto(rotulo or url, annotations=annotations or None, link=link))
-    else:
-        _parse_inline_em(rotulo, {**annotations}, itens)
-        # Só aplica o link quando a URL é absoluta http(s)/mailto — o Notion
-        # rejeita âncoras (#secao) e caminhos relativos; nesses casos fica só o texto.
-        if valida:
-            _aplicar_link(itens, url, rotulo)
-    return fim_url + 1
+    return {
+        "tipo": "imagem" if imagem else "link",
+        "rotulo": texto[abre:fecha],
+        "url": url,
+        "valida": _url_valida(url),
+        "fim": fim_url + 1,
+    }
 
 
 def _url_valida(url: str) -> bool:
@@ -395,112 +531,6 @@ def _url_valida(url: str) -> bool:
     """
 
     return url.startswith(("http://", "https://", "mailto:")) and len(url) <= MAX_URL_LINK
-
-
-def _aplicar_link(itens: list[dict[str, Any]], url: str, rotulo: str) -> None:
-    """Marca com ``link`` os últimos itens que formam o rótulo do link."""
-
-    restante = len(rotulo)
-    for item in reversed(itens):
-        if restante <= 0:
-            break
-        item["text"]["link"] = {"url": url}
-        restante -= len(item["text"]["content"])
-
-
-def _tentar_enfase(
-    texto: str,
-    i: int,
-    annotations: dict[str, bool],
-    descarregar: Any,
-    itens: list[dict[str, Any]],
-) -> int:
-    """Tenta consumir um trecho de ênfase a partir de ``i``.
-
-    Devolve o índice após o trecho consumido, ou ``0`` se não houver ênfase aqui.
-    """
-
-    for marcador, anotacao in _ENFASE:
-        if not texto.startswith(marcador, i):
-            continue
-        fim = texto.find(marcador, i + len(marcador))
-        if fim == -1:
-            continue
-        interior = texto[i + len(marcador) : fim]
-        if not interior:
-            continue
-        if anotacao != "code":
-            if not _pode_abrir(texto, i, marcador):
-                continue
-            fim = _achar_fechamento(texto, fim, marcador)
-            if fim == -1:
-                continue
-            interior = texto[i + len(marcador) : fim]
-        descarregar()
-        if anotacao == "code":
-            itens.append(_item_texto(interior, annotations={**annotations, "code": True}))
-        else:
-            _parse_inline_em(interior, {**annotations, anotacao: True}, itens)
-        return fim + len(marcador)
-    return 0
-
-
-# Flanqueamento simplificado do CommonMark: cobre o que corrompia texto real
-# (``snake_case``, ``2 * 3``) sem a regra de pontuação, que quebraria a ida e
-# volta de trechos formatados colados em pontuação (``a**(x)**b``, texto CJK).
-
-
-def _vizinhos_da_corrida(texto: str, i: int, caractere: str) -> tuple[str, str]:
-    """Os caracteres logo antes e logo depois da corrida de ``caractere`` em ``i``.
-
-    O CommonMark decide pela corrida inteira (``***``), não por um marcador
-    isolado dentro dela. Início ou fim da linha contam como espaço (``""``).
-    """
-
-    inicio = i
-    while inicio > 0 and texto[inicio - 1] == caractere:
-        inicio -= 1
-    fim = i
-    while fim < len(texto) and texto[fim] == caractere:
-        fim += 1
-    antes = texto[inicio - 1] if inicio > 0 else ""
-    depois = texto[fim] if fim < len(texto) else ""
-    return antes, depois
-
-
-def _pode_abrir(texto: str, i: int, marcador: str) -> bool:
-    """O marcador em ``i`` abre ênfase: não vem antes de espaço; ``_`` não cola em palavra."""
-
-    antes, depois = _vizinhos_da_corrida(texto, i, marcador[0])
-    if not depois or depois.isspace():
-        return False
-    return not (marcador[0] == "_" and antes.isalnum())
-
-
-def _pode_fechar(texto: str, i: int, marcador: str) -> bool:
-    """O marcador em ``i`` fecha ênfase: não vem depois de espaço; ``_`` não cola em palavra."""
-
-    antes, depois = _vizinhos_da_corrida(texto, i, marcador[0])
-    if not antes or antes.isspace():
-        return False
-    return not (marcador[0] == "_" and depois.isalnum())
-
-
-def _achar_fechamento(texto: str, fim: int, marcador: str) -> int:
-    """A partir da ocorrência ``fim``, a primeira que pode fechar, ou ``-1``.
-
-    Pula a corrida inteira quando ela não fecha, para uma sequência longa de
-    marcadores continuar linear.
-    """
-
-    while fim != -1:
-        if _pode_fechar(texto, fim, marcador):
-            return fim
-        proxima = fim
-        while proxima < len(texto) and texto[proxima] == marcador[0]:
-            proxima += 1
-        fim = texto.find(marcador, proxima)
-    return -1
 
 
 def _bloco(tipo: str, texto: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
