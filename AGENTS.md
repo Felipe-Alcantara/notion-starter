@@ -16,6 +16,7 @@ nem entry point de CLI; a fachada de uso é `notion-automacoes` no módulo CLI.
 | --- | --- |
 | `src/notion_starter/client.py` | Cliente HTTP resiliente (retries por semântica, rate limit, erros tipados); `obter_pagina`/`atualizar_pagina` leem e editam propriedades |
 | `src/notion_starter/schema.py` | Leitura/comparação de schema de databases |
+| `src/notion_starter/services/copia_corpo.py` | Cópia do corpo de uma página bloco a bloco (lista branca de tipos, sem `null`, aninhamento em etapas, desfaz em falha) |
 | `src/notion_starter/services/movimentacao.py` | Previsão de colunas criadas/perdidas ao mover uma página e movimento verificado (o cliente usa `POST /pages/{id}/move` e relê o pai) |
 | `src/notion_starter/tasks.py` | `Tarefa`, `TaskList`, `CamposTarefa` |
 | `src/notion_starter/content.py` + `properties.py` + `readers.py` | Conversão Markdown ↔ blocos (lógica pura); `properties.title`/`rich_text` fatiam texto >2000 (via `utils.fatiar_utf16`) |

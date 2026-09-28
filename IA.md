@@ -847,3 +847,54 @@ entrega: os fatos acima vêm da medição feita antes, no mesmo dia.
 **Contrato.** API pública nova (`resolver_data_source`, `TIPOS_PAI_DE_MOVIMENTO`,
 as duas exceções, o serviço) entra no `main` sem mudar a versão do pacote, por
 decisão de quem mantém; a CLI só pode exigi-la depois do próximo release.
+
+---
+
+## [2026-09-27] Copiar o corpo de uma página bloco a bloco
+
+**Contexto.** Para preencher modelos e consolidar páginas era preciso copiar um
+corpo com tabela, checklist e colunas. Passar por Markdown perde isso. A
+implementação de tarefa que funcionou (73 blocos: tabela de 9 linhas, to_do,
+quote, headings e listas, conferidos por contagem de tipos) mostrou três
+recusas da API, medidas em 2026-09-27:
+
+- a leitura devolve campos opcionais como `null` (`paragraph.icon`) e a escrita
+  recusa `null` onde espera objeto;
+- `plain_text`/`href` dos itens de *rich text* e campos só-leitura precisam sair;
+- o lote de 100 é **atômico**: um bloco recusado derruba todos.
+
+**Decisão.** `services/copia_corpo.py` (novo):
+
+- `copiar_corpo(origem, destino, *, so_se_vazio, mesmo_com_database, dry_run,
+  conferir)` grava no fim do destino e devolve `ResultadoCopia`;
+- **lista branca** de tipos graváveis (`TIPOS_COPIAVEIS`). Subpágina, database,
+  `link_preview`, arquivo hospedado no Notion (o link expira) e tipos
+  desconhecidos vão para `ignorados`, com o motivo;
+- *rich text* pela conversão que a biblioteca já tinha
+  (`content.item_para_requisicao`); menção não regravável vira texto com o link
+  e o bloco entra em `degradados`;
+- chaves `None` removidas em qualquer profundidade (o `synced_from: null` de um
+  bloco sincronizado original é mantido de propósito);
+- até dois níveis de `children` por requisição; o que passa disso é anexado
+  depois no bloco já criado (relendo os filhos para achar os IDs). Tabela,
+  `column_list` e `column` sempre nascem com os filhos; tabela com mais de 100
+  linhas recebe o resto depois; coluna sem nenhum filho copiável ganha um
+  parágrafo vazio, porque a API recusa coluna vazia;
+- lotes por `content.planejar_lotes` (100 blocos, 1000 elementos, 500 KB);
+- destino com database recusa como `escrever_conteudo`
+  (`EscritaAbaixoDeDatabaseError`), salvo `mesmo_com_database`;
+- falha no meio: os blocos de topo criados vão de novo para a lixeira e sobe
+  `EscritaParcialError` (o mesmo contrato das outras escritas).
+
+**Validação.** `tests/test_services_copia_corpo.py` (11 testes) com um double
+que aplica as recusas medidas (nulo, campo de leitura no *rich text*, mais de
+dois níveis, mais de 100 filhos, tabela/colunas sem filhos, lote atômico).
+Conferido à parte que o double pega os defeitos: sem a remoção de `null`, o
+teste da página medida falha; aceitando cinco níveis numa requisição, o teste de
+aninhamento falha. Nada foi escrito no Notion real nesta entrega.
+
+**Limites conhecidos.** A conferência (`conferir=True`) conta os filhos que a
+leitura devolve; numa cópia de bloco sincronizado **duplicado** a releitura
+mostra o conteúdo do original e a contagem diverge. Um arquivo hospedado no
+Notion não é copiado (seria preciso baixar e reenviar pela File Upload API),
+uma melhoria aberta a quem quiser contribuir.

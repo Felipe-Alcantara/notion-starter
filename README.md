@@ -112,6 +112,13 @@ notion-starter/
   mudou). `services.movimentacao.prever_movimento` diz antes quais colunas o
   Notion vai criar no database de destino e quais valores vão se perder;
   `services.movimentacao.mover_pagina` recusa perda sem `aceitar_perdas=True`.
+- **Copiar corpo bloco a bloco** — `services.copia_corpo.copiar_corpo(origem,
+  destino)` recria tabela, checklist, colunas, callout e menções sem passar por
+  Markdown: tira os `null` que a escrita recusa, só grava tipos de uma lista
+  branca (o resto vai para `ignorados` com o motivo), respeita dois níveis de
+  `children` por requisição e anexa o que for mais fundo depois. Aceita
+  `so_se_vazio`, `dry_run` e `conferir` (relê e compara a contagem por tipo);
+  numa falha, desfaz o que criou.
 - **Relações** — `services.relacoes.relacionar` liga os dois sentidos
   conferindo a outra ponta, lê a lista inteira acima de 25 páginas e recusa
   passar de 100.
