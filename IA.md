@@ -898,3 +898,45 @@ leitura devolve; numa cópia de bloco sincronizado **duplicado** a releitura
 mostra o conteúdo do original e a contagem diverge. Um arquivo hospedado no
 Notion não é copiado (seria preciso baixar e reenviar pela File Upload API),
 uma melhoria aberta a quem quiser contribuir.
+
+---
+
+## [2026-09-27] Modelos nativos: listar e preencher a partir de um manifesto
+
+**Fatos medidos em 2026-09-27 (versão `2025-09-03`).**
+
+- `GET /data_sources/{id}/templates` devolve
+  `{"templates": [{"id", "name", "is_default"}], "has_more", "next_cursor"}`;
+  um modelo sem título aparece como `"New page"`.
+- A API **não cria** modelo nativo e não há rota conhecida para escolher o
+  padrão (o hub já registrava, em 10/08/2026, que `POST /pages` recusa
+  `is_template`).
+- Um modelo existente é uma página comum: o PATCH de propriedades e o append de
+  blocos funcionaram nele.
+
+**Decisão.**
+
+- `NotionClient.listar_modelos(data_source_id)` percorre a paginação.
+- `properties.valor_de_texto(tipo, texto)`: a regra de conversão do
+  `editar-linha` da CLI (`services/propriedades.py` de lá), trazida para a
+  biblioteca para quem recebe valores em texto. A CLI continua com a cópia dela
+  até poder depender do próximo release; depois disso ela pode virar shim.
+- `services/modelos.py`: `carregar_manifesto` (lista de `nome`, `arquivo`
+  relativo à pasta do manifesto **ou** `copiar_de`, `propriedades`; todos os
+  problemas numa `ManifestoInvalidoError`), `listar_modelos` e
+  `preencher_modelos`. Regras:
+  - **vazio** = sem corpo **e** com nome de modelo sem título (`New page`,
+    `Untitled`, `Nova página`, `Sem título`); modelo com nome próprio nunca é
+    reaproveitado, mesmo sem corpo (a implementação de tarefa reaproveitava
+    qualquer modelo sem corpo);
+  - item cujo nome já existe com corpo é pulado; com nome e sem corpo é
+    completado (rodada interrompida);
+  - colunas conferidas contra o schema da fonte **antes** da primeira escrita;
+  - nome e colunas vão antes do corpo, para a rodada seguinte achar o modelo
+    pelo nome;
+  - `copiar_de` usa `copia_corpo.copiar_corpo(..., so_se_vazio=True)`.
+
+**Validação.** `tests/test_services_modelos.py` (21 testes: paginação e versão
+do cliente, conversão de texto, manifesto, preenchimento na ordem, segunda
+rodada sem escrita, completar, recusa de coluna antes de escrever, dry-run).
+Nada foi escrito no Notion real.

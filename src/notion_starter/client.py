@@ -973,6 +973,49 @@ class NotionClient:
 
         return resultados
 
+    def listar_modelos(self, data_source_id: str) -> list[dict[str, Any]]:
+        """Lista os **modelos nativos** (templates) de um *data source*.
+
+        ``GET /data_sources/{id}/templates`` (versão ``2025-09-03``), percorrendo
+        a paginação. Medido em 2026-09-27: cada item vem como
+        ``{"id", "name", "is_default"}`` e um modelo sem título aparece com o
+        nome ``"New page"``.
+
+        A API **lista** os modelos mas não os **cria** nem define o padrão: isso
+        só pela interface do Notion. Um modelo existente é uma página comum —
+        propriedades por :meth:`atualizar_pagina` e corpo por
+        :meth:`anexar_blocos` funcionam nele.
+
+        Args:
+            data_source_id: ID da fonte de dados (ver :meth:`resolver_data_source`).
+
+        Returns:
+            Os modelos, na ordem da API.
+
+        Raises:
+            NotionConfigurationError: Se ``data_source_id`` for vazio.
+            NotionHTTPError: Se a API responder com 4xx/5xx.
+        """
+
+        limpo = _validar_identificador(data_source_id, "data_source_id")
+        modelos: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            params: dict[str, str] = {"page_size": "100"}
+            if cursor:
+                params["start_cursor"] = cursor
+            data = self._request_json(
+                method="GET",
+                path=f"/data_sources/{limpo}/templates?{urlencode(params)}",
+                idempotente=True,
+                version=NOTION_DATA_SOURCE_VERSION,
+            )
+            modelos.extend(m for m in data.get("templates", []) if isinstance(m, dict))
+            cursor = data.get("next_cursor")
+            if not data.get("has_more") or not cursor:
+                break
+        return modelos
+
     # -- Páginas -----------------------------------------------------------
 
     def criar_pagina(

@@ -112,6 +112,13 @@ notion-starter/
   mudou). `services.movimentacao.prever_movimento` diz antes quais colunas o
   Notion vai criar no database de destino e quais valores vão se perder;
   `services.movimentacao.mover_pagina` recusa perda sem `aceitar_perdas=True`.
+- **Modelos nativos** — `NotionClient.listar_modelos(data_source_id)` lê os
+  modelos (templates) de um database; `services.modelos.preencher_modelos` dá
+  nome, colunas e corpo (Markdown ou `copiar_de` outra página) aos modelos
+  vazios a partir de um manifesto JSON (`carregar_manifesto`), de forma
+  idempotente. A API não cria modelo nem define o padrão: isso só pela
+  interface. `properties.valor_de_texto(tipo, texto)` converte `Nome=valor` no
+  payload da coluna (a regra do `editar-linha`).
 - **Copiar corpo bloco a bloco** — `services.copia_corpo.copiar_corpo(origem,
   destino)` recria tabela, checklist, colunas, callout e menções sem passar por
   Markdown: tira os `null` que a escrita recusa, só grava tipos de uma lista

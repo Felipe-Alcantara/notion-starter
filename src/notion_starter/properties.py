@@ -217,3 +217,97 @@ def _para_iso(valor: str | _dt.date | _dt.datetime) -> str:
     if isinstance(valor, (_dt.date, _dt.datetime)):
         return valor.isoformat()
     return valor
+
+
+#: Tipos calculados ou gerenciados pelo Notion: não aceitam escrita pela API.
+TIPOS_SOMENTE_LEITURA = frozenset(
+    {
+        "formula",
+        "rollup",
+        "created_time",
+        "created_by",
+        "last_edited_time",
+        "last_edited_by",
+        "unique_id",
+        "button",
+        "verification",
+    }
+)
+
+
+def _numero_de_texto(texto: str) -> float | int:
+    try:
+        return int(texto)
+    except ValueError:
+        return float(texto)
+
+
+def _lista_de_texto(texto: str) -> list[str]:
+    return [parte.strip() for parte in texto.split(",") if parte.strip()]
+
+
+def valor_de_texto(tipo: str, texto: str) -> NotionPropertyValue:
+    """Converte um valor escrito como texto no payload de propriedade do ``tipo``.
+
+    É a regra do ``editar-linha`` da CLI (``Nome=valor``), trazida para a
+    biblioteca para os serviços que recebem valores em texto — manifestos,
+    planilhas — escreverem colunas sem cada um reinventar o formato:
+
+    - ``multi_select``, ``relation`` e ``people`` recebem itens separados por
+      vírgula; ``date`` aceita intervalo ``inicio..fim``;
+    - ``checkbox`` é verdadeiro para ``true``/``1``/``sim``/``yes``/``x``/``✓``;
+    - texto vazio limpa a propriedade quando o tipo permite.
+
+    Args:
+        tipo: ``type`` da coluna, como o schema ou a página informam.
+        texto: Valor em texto.
+
+    Returns:
+        O payload da propriedade (ex.: ``{"select": {"name": "Ideia"}}``).
+
+    Raises:
+        ValueError: Tipo calculado, tipo sem conversão, número inválido ou
+            ``status`` vazio.
+    """
+
+    texto = texto.strip()
+    vazio = texto == ""
+    if tipo in TIPOS_SOMENTE_LEITURA:
+        raise ValueError(f"Colunas do tipo '{tipo}' são calculadas pelo Notion e não se editam.")
+    if tipo == "title":
+        return {"title": []} if vazio else title(texto)
+    if tipo == "rich_text":
+        return {"rich_text": []} if vazio else rich_text(texto)
+    if tipo == "number":
+        if vazio:
+            return {"number": None}
+        try:
+            return number(_numero_de_texto(texto))
+        except ValueError as exc:
+            raise ValueError(f"'{texto}' não é um número válido.") from exc
+    if tipo == "checkbox":
+        return checkbox(texto.casefold() in {"true", "1", "sim", "yes", "x", "✓"})
+    if tipo == "select":
+        return {"select": None} if vazio else select(texto)
+    if tipo == "status":
+        if vazio:
+            raise ValueError("Uma propriedade 'status' não pode ficar vazia.")
+        return status(texto)
+    if tipo == "multi_select":
+        return multi_select(_lista_de_texto(texto))
+    if tipo == "relation":
+        return relation(_lista_de_texto(texto))
+    if tipo == "people":
+        return {"people": [{"id": id_} for id_ in _lista_de_texto(texto)]}
+    if tipo == "date":
+        if vazio:
+            return {"date": None}
+        inicio, _, fim = texto.partition("..")
+        return date(inicio.strip(), fim.strip() or None)
+    if tipo == "email":
+        return {"email": texto or None}
+    if tipo == "phone_number":
+        return {"phone_number": texto or None}
+    if tipo == "url":
+        return {"url": texto or None}
+    raise ValueError(f"Tipo '{tipo}' ainda não tem conversão a partir de texto.")
