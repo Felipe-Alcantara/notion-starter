@@ -126,8 +126,47 @@ def ler_people(prop: NotionPropertyValue | None) -> list[str]:
     return [item.get("id", "") for item in itens]
 
 
+def ler_created_time(prop: NotionPropertyValue | None) -> str | None:
+    """Lê a data de criação (ISO) de uma coluna ``created_time``."""
+
+    return (prop or {}).get("created_time")
+
+
+def ler_last_edited_time(prop: NotionPropertyValue | None) -> str | None:
+    """Lê a data da última edição (ISO) de uma coluna ``last_edited_time``."""
+
+    return (prop or {}).get("last_edited_time")
+
+
+def _id_de_usuario(valor: Any) -> str | None:
+    return valor.get("id") if isinstance(valor, dict) else None
+
+
+def ler_created_by(prop: NotionPropertyValue | None) -> str | None:
+    """Lê o ID de quem criou a página (coluna ``created_by``)."""
+
+    return _id_de_usuario((prop or {}).get("created_by"))
+
+
+def ler_last_edited_by(prop: NotionPropertyValue | None) -> str | None:
+    """Lê o ID de quem editou por último (coluna ``last_edited_by``)."""
+
+    return _id_de_usuario((prop or {}).get("last_edited_by"))
+
+
+def ler_unique_id(prop: NotionPropertyValue | None) -> str | None:
+    """Lê um ``unique_id`` como texto: ``"PRE-12"`` com prefixo, ``"12"`` sem."""
+
+    valor = (prop or {}).get("unique_id")
+    if not isinstance(valor, dict) or valor.get("number") is None:
+        return None
+    prefixo = valor.get("prefix")
+    return f"{prefixo}-{valor['number']}" if prefixo else str(valor["number"])
+
+
 #: Despacho ``type`` da propriedade -> função de leitura. Espelha os tipos que
-#: :mod:`properties` sabe escrever, mais ``relation``/``people`` (só leitura por ora).
+#: :mod:`properties` sabe escrever, mais ``relation``/``people`` e os carimbos
+#: que o Notion calcula (datas e autores de criação/edição, ``unique_id``).
 _LEITORES_POR_TIPO: dict[str, Callable[[NotionPropertyValue | None], Any]] = {
     "title": ler_title,
     "rich_text": ler_rich_text,
@@ -142,6 +181,11 @@ _LEITORES_POR_TIPO: dict[str, Callable[[NotionPropertyValue | None], Any]] = {
     "checkbox": ler_checkbox,
     "relation": ler_relation,
     "people": ler_people,
+    "created_time": ler_created_time,
+    "last_edited_time": ler_last_edited_time,
+    "created_by": ler_created_by,
+    "last_edited_by": ler_last_edited_by,
+    "unique_id": ler_unique_id,
 }
 
 

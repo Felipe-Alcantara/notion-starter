@@ -142,3 +142,29 @@ def test_extrair_valores_pagina_sem_properties():
 def test_extrair_valores_tipo_nao_suportado_vira_none():
     pagina = {"properties": {"Fórmula": {"type": "formula", "formula": {"number": 7}}}}
     assert r.extrair_valores(pagina) == {"Fórmula": None}
+
+
+def test_le_carimbos_calculados_pelo_notion():
+    # Antes estes tipos voltavam None: 'linhas --completo' mostrava "Criado em": null.
+    pagina = {
+        "properties": {
+            "Criado em": {"type": "created_time", "created_time": "2026-09-01T10:00:00.000Z"},
+            "Editado em": {"type": "last_edited_time",
+                           "last_edited_time": "2026-09-02T10:00:00.000Z"},
+            "Criado por": {"type": "created_by", "created_by": {"object": "user", "id": "u1"}},
+            "Editado por": {"type": "last_edited_by",
+                            "last_edited_by": {"object": "user", "id": "u2"}},
+            "ID": {"type": "unique_id", "unique_id": {"prefix": "ART", "number": 12}},
+            "Nº": {"type": "unique_id", "unique_id": {"prefix": None, "number": 7}},
+        }
+    }
+
+    assert r.extrair_valores(pagina) == {
+        "Criado em": "2026-09-01T10:00:00.000Z",
+        "Editado em": "2026-09-02T10:00:00.000Z",
+        "Criado por": "u1",
+        "Editado por": "u2",
+        "ID": "ART-12",
+        "Nº": "7",
+    }
+    assert r.ler_unique_id({"type": "unique_id", "unique_id": {"number": None}}) is None

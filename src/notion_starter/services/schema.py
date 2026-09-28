@@ -171,3 +171,64 @@ def renomear_coluna(
     return cli.atualizar_database(
         database_id, propriedades={nome_atual: {"name": novo_nome}}
     )
+
+
+def remover_coluna(
+    database_id: str,
+    nome_coluna: str,
+    *,
+    cliente: NotionClient | None = None,
+) -> dict[str, Any]:
+    """Remove uma coluna do schema — os valores dela somem de todas as linhas.
+
+    Destrutivo: quem expõe (CLI/MCP) deve pedir confirmação explícita. Serve,
+    por exemplo, para desfazer as colunas que o Notion **acrescenta** ao schema
+    do destino quando uma linha é movida entre databases (medido em
+    2026-09-27; ver :mod:`notion_starter.services.movimentacao`). A coluna de
+    título não pode ser removida. Usa o *data source* quando o database expõe
+    um (``{nome: null}`` no PATCH); cai para o endpoint clássico caso contrário.
+
+    Args:
+        database_id: ID do database.
+        nome_coluna: Nome exato da coluna (sensível a maiúsculas).
+        cliente: Cliente Notion opcional (injeção para testes).
+
+    Returns:
+        ``{"database_id", "coluna", "tipo"}`` da coluna removida.
+
+    Raises:
+        ValueError: IDs vazios, coluna inexistente (com as disponíveis) ou
+            coluna de título.
+    """
+
+    database_id = (database_id or "").strip()
+    nome_coluna = (nome_coluna or "").strip()
+    if not database_id:
+        raise ValueError("database_id é obrigatório.")
+    if not nome_coluna:
+        raise ValueError("nome_coluna é obrigatório.")
+
+    cli = cliente or _cliente_padrao()
+
+    def _tipo(propriedades: dict[str, Any]) -> str:
+        definicao = propriedades.get(nome_coluna)
+        if not isinstance(definicao, dict):
+            disponiveis = ", ".join(sorted(propriedades)) or "(nenhuma)"
+            raise ValueError(
+                f"Coluna {nome_coluna!r} não existe no schema. Disponíveis: {disponiveis}"
+            )
+        tipo = str(definicao.get("type") or "")
+        if tipo == "title":
+            raise ValueError(f"A coluna de título ({nome_coluna!r}) não pode ser removida.")
+        return tipo
+
+    remocao: dict[str, Any] = {nome_coluna: None}
+    fontes = cli.listar_data_sources(database_id)
+    if fontes:
+        data_source_id = str(fontes[0].get("id") or "")
+        tipo = _tipo(cli.get_data_source(data_source_id).get("properties", {}))
+        cli.atualizar_data_source(data_source_id, propriedades=remocao)
+    else:
+        tipo = _tipo(cli.get_database(database_id).get("properties", {}))
+        cli.atualizar_database(database_id, propriedades=remocao)
+    return {"database_id": database_id, "coluna": nome_coluna, "tipo": tipo}

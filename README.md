@@ -78,7 +78,8 @@ notion-starter/
   que o Notion salvou apesar do 503 vira `NotionEscritaSalvaError` com os IDs
   criados. `anexar_blocos` aceita `apos_bloco_id` ou `no_inicio`.
 - **Schema** — leitura e comparação de schemas de databases com
-  `comparar_schema`.
+  `comparar_schema`; `services.schema` garante, renomeia e remove colunas
+  (`remover_coluna` recusa a de título).
 - **Tarefas** — modelos `Tarefa` e `TaskList` para criar, editar, mover e concluir
   tarefas; na criação, a coluna de título é descoberta pelo schema para também
   aceitar databases genéricos.
@@ -147,7 +148,9 @@ notion-starter/
   classificação e só escreve quando o chamador pede explicitamente.
 - **Relatórios DOCX** — `notion_starter.services.relatorios_docx` exporta um arquivo
   por data, combinando propriedades e corpo sem arquivos intermediários.
-- **Utilidades** — saneamento de texto/JSON, `fatiar_utf16`, logging e readers.
+- **Utilidades** — saneamento de texto/JSON, `fatiar_utf16`, logging e readers
+  (inclusive os carimbos `created_time`, `last_edited_time`, `created_by`,
+  `last_edited_by` e `unique_id`).
 
 Exemplo de fluxo: `Markdown` → blocos tipados da API do Notion → página atualizada.
 

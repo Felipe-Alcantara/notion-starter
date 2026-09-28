@@ -985,3 +985,30 @@ blocos de coluna e páginas não compartilhadas com a integração encerram a
 subida. A retomada confia no nome do arquivo: um corpo que mudou no Notion
 depois do download só é relido apagando o arquivo — um modo "atualizar por
 `last_edited_time`" seria uma boa contribuição.
+
+---
+
+## [2026-09-27] Leitura dos carimbos do Notion e `remover_coluna`
+
+**O que estava errado.** `readers.extrair_valores` devolvia `None` para
+`created_time`, `last_edited_time`, `created_by`, `last_edited_by` e
+`unique_id`: `linhas --completo` da CLI mostrava `"Criado em": null` numa
+coluna preenchida (medido em 2026-09-27), e quem ordenava linhas pela data de
+criação precisava ir ao JSON cru.
+
+**Decisão.**
+
+- `readers` ganhou `ler_created_time`, `ler_last_edited_time`,
+  `ler_created_by`/`ler_last_edited_by` (ID do usuário) e `ler_unique_id`
+  (`"PRE-12"`, ou só o número sem prefixo), registrados no despacho de
+  `ler_propriedade`. Nenhum teste dos consumidores fixava `None` nesses tipos
+  (conferido no CLI e no app).
+- `services.schema.remover_coluna(database_id, coluna)`: `{coluna: null}` no
+  PATCH do data source (ou do database clássico); recusa a coluna de título e
+  coluna inexistente (listando as disponíveis) antes de escrever. É o par de
+  `garantir_coluna`, e o caminho para desfazer as colunas que o Notion cria no
+  destino ao mover uma linha entre databases.
+
+**Validação.** Um teste novo em `tests/test_readers.py` (falha no código
+anterior: os seis valores voltavam `None`) e quatro em
+`tests/test_services_schema.py`. Nada foi escrito no Notion real.
