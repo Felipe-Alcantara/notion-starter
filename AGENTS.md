@@ -21,6 +21,7 @@ nem entry point de CLI; a fachada de uso é `notion-automacoes` no módulo CLI.
 | `src/notion_starter/services/movimentacao.py` | Previsão de colunas criadas/perdidas ao mover uma página e movimento verificado (o cliente usa `POST /pages/{id}/move` e relê o pai) |
 | `src/notion_starter/tasks.py` | `Tarefa`, `TaskList`, `CamposTarefa` |
 | `src/notion_starter/content.py` + `properties.py` + `readers.py` | Conversão Markdown ↔ blocos (lógica pura); `properties.title`/`rich_text` fatiam texto >2000 (via `utils.fatiar_utf16`) |
+| `src/notion_starter/services/inventario_workspace.py`, `corpos.py`, `busca_conteudo.py` | Acervo do workspace: inventário plano com datas e caminho (JSON), download retomável e priorizado dos corpos, busca por regex no texto baixado |
 | `src/notion_starter/inventory.py` | Mapeamento do workspace (lógica pura, sem rede) |
 | `src/notion_starter/git_historico.py` | Histórico de um repositório git agrupado por dia (lógica pura, sem rede/Notion) |
 | `src/notion_starter/github.py`, `openrouter.py` | Adaptadores externos compartilhados por CLI e app |

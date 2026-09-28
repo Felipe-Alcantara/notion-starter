@@ -940,3 +940,48 @@ uma melhoria aberta a quem quiser contribuir.
 do cliente, conversão de texto, manifesto, preenchimento na ordem, segunda
 rodada sem escrita, completar, recusa de coluna antes de escrever, dry-run).
 Nada foi escrito no Notion real.
+
+---
+
+## [2026-09-27] Acervo do workspace: inventário com datas, corpos retomáveis e busca no texto
+
+**Contexto (medido em 2026-09-27).** Organizar ideias espalhadas pelo
+workspace pedia três coisas que a biblioteca não tinha:
+
+- **datas e caminho** de cada item: o `/search` sem termo, com paginação
+  completa, devolveu 3.841 itens em 62 s já com `created_time` e
+  `last_edited_time`, mas `inventory.construir_inventario` guarda só a árvore;
+- **os corpos**: ler o corpo recursivo de ~1.800 páginas levou ~30 min, a ~1
+  página/s com 3 threads (limite de taxa) — sem retomada, uma queda perde tudo;
+- **busca no texto completo**: o `/search` casa só o título.
+
+**Decisão.** Três serviços, um por responsabilidade:
+
+- `inventario_workspace`: `RegistroWorkspace` (id, objeto, título, datas, pai,
+  caminho, url, arquivado, colunas preenchidas), `varrer_workspace`,
+  `preencher_caminhos` (para em pai desconhecido e em ciclo),
+  `salvar_inventario`/`carregar_inventario` (JSON `{"versao": 1, ...}`; aceita
+  também a lista pura) e `resumir`;
+- `corpos`: `selecionar_paginas` (prefixos de caminho, databases a ignorar ou
+  a manter, arquivados), `ordenar_por_prioridade` (páginas soltas e databases
+  pequenos primeiro, depois as que casam com um padrão, depois o resto) e
+  `baixar_corpos` (retomável pelo nome do arquivo, gravação atômica
+  `.parcial` + troca de nome, `limite` por rodada, falhas por página, 3
+  threads por padrão). O cabeçalho de metadados vai num comentário HTML, com
+  `-->` escapado dentro do JSON;
+- `busca_conteudo`: `buscar_no_conteudo(pasta, regex)` compara sem acentos e
+  sem caixa por padrão, mas corta os trechos do **original** usando um mapa de
+  índices (vale para ligaduras, em que a normalização muda o comprimento; a
+  implementação de tarefa caía no texto normalizado nesses casos).
+
+**Validação.** `tests/test_services_inventario_corpos_busca.py` (16 testes:
+datas e colunas, caminho com ciclo, filtro do `/search`, ida e volta do JSON,
+seleção, prioridade, retomada com limite, falha sem arquivo parcial, cabeçalho
+com `-->`, busca sem acentos com trecho original, ligadura, expressão
+inválida). Nenhuma chamada ao Notion real nesta entrega.
+
+**Limites conhecidos.** O `caminho` só sobe por pais que o `/search` devolve:
+blocos de coluna e páginas não compartilhadas com a integração encerram a
+subida. A retomada confia no nome do arquivo: um corpo que mudou no Notion
+depois do download só é relido apagando o arquivo — um modo "atualizar por
+`last_edited_time`" seria uma boa contribuição.

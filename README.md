@@ -136,6 +136,12 @@ notion-starter/
   `status`, `number`, `date`, `relation` e outros tipos; textos acima de 2.000
   unidades UTF-16 são fatiados automaticamente.
 - **Inventário** — varredura de páginas, databases e árvore do workspace.
+- **Acervo do workspace** — `services.inventario_workspace` grava em JSON
+  cada página/database com `created_time`, `last_edited_time`, caminho de
+  ancestrais e colunas preenchidas; `services.corpos` baixa o Markdown de cada
+  página de forma retomável (arquivo existente é pulado; gravação atômica) e
+  priorizada; `services.busca_conteudo` procura uma expressão regular no
+  texto completo baixado, sem acentos, devolvendo trechos do original.
 - **Classificação em lote** — `notion_starter.services.classificacao` calcula a
   distribuição de uma regra sobre linhas já buscadas, lista as linhas sem
   classificação e só escreve quando o chamador pede explicitamente.
