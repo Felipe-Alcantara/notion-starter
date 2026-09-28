@@ -419,6 +419,62 @@ class NotionSchemaError(NotionSyncError):
         super().__init__(f"Schema incompatível — {'; '.join(detalhes)}")
 
 
+class FonteDeDadosIndefinidaError(NotionSyncError, ValueError):
+    """Um database não tem exatamente um *data source* para receber a operação.
+
+    No modelo multi-fonte do Notion (versão ``2025-09-03``) as linhas moram num
+    *data source*, não no database. Quando o database tem uma fonte só, ela é a
+    escolha óbvia; com nenhuma (não compartilhada com a integração) ou com
+    várias, adivinhar gravaria no lugar errado — então a operação é recusada e
+    a mensagem lista as fontes para quem chamou escolher.
+
+    Attributes:
+        database_id: Database consultado.
+        fontes: ``(data_source_id, nome)`` de cada fonte encontrada.
+    """
+
+    def __init__(self, database_id: str, fontes: list[tuple[str, str]]) -> None:
+        self.database_id = database_id
+        self.fontes = list(fontes)
+        if not self.fontes:
+            mensagem = (
+                f"O database {database_id} não expõe nenhum data source a esta "
+                "integração: compartilhe-o com a integração no Notion."
+            )
+        else:
+            listagem = ", ".join(f"{nome or '(sem nome)'} → {fonte}" for fonte, nome in fontes)
+            mensagem = (
+                f"O database {database_id} tem {len(self.fontes)} data sources "
+                f"({listagem}): informe qual deles usar."
+            )
+        super().__init__(mensagem)
+
+
+class MovimentoNaoAplicadoError(NotionSyncError, RuntimeError):
+    """O Notion respondeu ao pedido de mover, mas a página continua em outro pai.
+
+    Medido em 2026-09-27: ``PATCH /pages/{id}`` com ``parent`` responde 200 e
+    **ignora** o campo. Por isso quem move relê a página e compara o pai; esta
+    exceção é o que sobra quando a releitura não bate com o destino pedido.
+
+    Attributes:
+        page_id: Página que deveria ter sido movida.
+        destino: Pai pedido, no formato ``parent`` da API.
+        pai_atual: ``parent`` relido depois do pedido.
+    """
+
+    def __init__(
+        self, page_id: str, destino: dict[str, Any], pai_atual: dict[str, Any]
+    ) -> None:
+        self.page_id = page_id
+        self.destino = dict(destino)
+        self.pai_atual = dict(pai_atual)
+        super().__init__(
+            f"A página {page_id} não foi movida: o pedido era {self.destino}, mas a "
+            f"releitura mostra o pai {self.pai_atual}. Nada foi alterado."
+        )
+
+
 class EscritaAbaixoDeDatabaseError(NotionSyncError):
     """Tentativa de escrever bloco solto numa página que contém uma database.
 

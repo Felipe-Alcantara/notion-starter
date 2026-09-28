@@ -801,3 +801,49 @@ problemas confirmados, 1 refutado.**
   0,43 s.
 - **Consumidores:** `notion-tasks-cli` 333/333 e `notion-workspace-app`
   279/279 com esta versão, os mesmos números da 0.4.0.
+
+---
+
+## [2026-09-27] Mover página de verdade: `POST /pages/{id}/move` e pai conferido
+
+**O que estava errado (medido no workspace real em 2026-09-27).**
+`NotionClient.mover_pagina` fazia `PATCH /pages/{id}` com `parent`. O Notion
+responde 200 e **ignora** o campo: `parent` e `last_edited_time` relidos
+ficaram iguais. A CLI (`mover-pagina`) e o MCP do app reportavam um movimento
+que não acontecia. O aviso antigo do docstring ("página que contém databases é
+aceita e ignorada") era um caso particular do mesmo defeito.
+
+**Decisão.**
+
+- `mover_pagina(page_id, novo_pai_id, *, tipo_pai="page_id")` manteve a
+  assinatura e passou a usar `POST /pages/{id}/move` com
+  `Notion-Version: 2025-09-03`. `tipo_pai` aceita também `"data_source_id"`;
+  `"database_id"` resolve o **único** data source do database pelo método
+  novo `resolver_data_source` (zero ou várias fontes: `FonteDeDadosIndefinidaError`,
+  que lista as fontes).
+- Depois do pedido a página é relida e o pai comparado (`chave_de_id`); se não
+  bater, `MovimentoNaoAplicadoError`. Quando o destino é data source, a
+  releitura mostra `{"type": "database_id", ...}` (medido) e é o database dono
+  da fonte que se compara. O retorno passou a ser a página relida.
+- `services/movimentacao.py` (novo): `prever_movimento` lê a página e o schema
+  da fonte de destino e classifica as colunas; `mover_pagina` recusa perda de
+  valor sem `aceitar_perdas=True` (`MovimentoComPerdasError`) e aceita
+  `dry_run`. Regras, com o que foi medido marcado no `motivo`:
+  - coluna ausente no destino → o Notion a **cria** lá (medido: uma
+    `multi_select` apareceu com as opções da origem);
+  - `select`/`status`/`multi_select` com opção inexistente no destino → valor
+    perdido (medido);
+  - relação → perdida (medido);
+  - mesmo nome com outro tipo, e linha movida para uma página → perda
+    (previsão pelo lado seguro, não medida);
+  - tipos calculados → listados à parte, recalculados no destino.
+
+**Validação.** `tests/test_client_movimento.py` (7 testes) e
+`tests/test_services_movimentacao.py` (8) novos; os dois testes antigos de
+`test_client.py` que fixavam o `PATCH` foram reescritos para o endpoint novo e
+falham com o cliente anterior. Nada foi testado contra o Notion real nesta
+entrega: os fatos acima vêm da medição feita antes, no mesmo dia.
+
+**Contrato.** API pública nova (`resolver_data_source`, `TIPOS_PAI_DE_MOVIMENTO`,
+as duas exceções, o serviço) entra no `main` sem mudar a versão do pacote, por
+decisão de quem mantém; a CLI só pode exigi-la depois do próximo release.

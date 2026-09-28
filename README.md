@@ -105,6 +105,13 @@ notion-starter/
     explícito).
 - **IDs** — `utils.normalizar_id` aceita UUID com ou sem hífens e links do
   Notion (ignora `?v=`, usa `?p=` e, quando pedido, a âncora `#bloco`).
+- **Mover páginas de verdade** — `NotionClient.mover_pagina` usa
+  `POST /pages/{id}/move` (o `PATCH` com `parent` é ignorado pelo Notion),
+  aceita destino página, database (resolve o único data source) ou data source,
+  e relê a página para confirmar o pai (`MovimentoNaoAplicadoError` se não
+  mudou). `services.movimentacao.prever_movimento` diz antes quais colunas o
+  Notion vai criar no database de destino e quais valores vão se perder;
+  `services.movimentacao.mover_pagina` recusa perda sem `aceitar_perdas=True`.
 - **Relações** — `services.relacoes.relacionar` liga os dois sentidos
   conferindo a outra ponta, lê a lista inteira acima de 25 páginas e recusa
   passar de 100.

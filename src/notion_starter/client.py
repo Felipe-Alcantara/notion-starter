@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 
 import requests
 
-from .utils import safe_json_dumps
+from .utils import chave_de_id, safe_json_dumps
 
 try:  # ``NotRequired`` só existe em ``typing`` a partir do 3.11.
     from typing import NotRequired, TypedDict
@@ -37,6 +37,8 @@ from .constants import (
 )
 from .content import planejar_lotes
 from .exceptions import (
+    FonteDeDadosIndefinidaError,
+    MovimentoNaoAplicadoError,
     NotionAPIError,
     NotionConfigurationError,
     NotionConnectionError,
@@ -172,6 +174,24 @@ class BlockRestorePayload(TypedDict):
     """Payload que tira um bloco da lixeira (``in_trash: false``)."""
 
     in_trash: bool
+
+
+class MovePageParentPayload(TypedDict, total=False):
+    """Destino de ``POST /pages/{id}/move``: uma página ou um *data source*."""
+
+    type: Literal["page_id", "data_source_id"]
+    page_id: str
+    data_source_id: str
+
+
+class MovePagePayload(TypedDict):
+    """Corpo de ``POST /pages/{id}/move`` (versão ``2025-09-03``)."""
+
+    parent: MovePageParentPayload
+
+
+#: Destinos aceitos por :meth:`NotionClient.mover_pagina`.
+TIPOS_PAI_DE_MOVIMENTO: tuple[str, ...] = ("page_id", "database_id", "data_source_id")
 
 
 def _eh_leitura(metodo: str, path: str) -> bool:
@@ -1161,6 +1181,36 @@ class NotionClient:
             idempotente=True,
         )
 
+    def resolver_data_source(self, database_id: str) -> str:
+        """Devolve o ``id`` do **único** *data source* de um database.
+
+        É a resolução de que precisam as operações que escrevem numa fonte
+        (mover uma página para dentro do database, listar modelos nativos):
+        com uma fonte só, ela é a escolha óbvia; com nenhuma ou com várias,
+        escolher sozinho gravaria no lugar errado.
+
+        Args:
+            database_id: ID do database.
+
+        Returns:
+            O ID do data source.
+
+        Raises:
+            NotionConfigurationError: Se ``database_id`` for vazio.
+            FonteDeDadosIndefinidaError: Se o database tiver zero ou mais de uma
+                fonte visível — a exceção lista as fontes para a escolha.
+            NotionHTTPError: Se a API responder com 4xx/5xx.
+        """
+
+        fontes = [
+            (str(fonte.get("id") or ""), str(fonte.get("name") or ""))
+            for fonte in self.listar_data_sources(database_id)
+            if isinstance(fonte, dict) and fonte.get("id")
+        ]
+        if len(fontes) != 1:
+            raise FonteDeDadosIndefinidaError(database_id, fontes)
+        return fontes[0][0]
+
     def mover_pagina(
         self,
         page_id: str,
@@ -1168,41 +1218,85 @@ class NotionClient:
         *,
         tipo_pai: str = "page_id",
     ) -> dict[str, Any]:
-        """Re-parenteia (move) uma página para outra página ou database.
+        """Move uma página para outra página, database ou *data source* — e confere.
 
-        A API do Notion aceita alterar o ``parent`` de uma página via ``PATCH``,
-        o que efetivamente a move de lugar sem recriá-la — preservando conteúdo,
-        propriedades e links. Útil para consolidar/reorganizar uma workspace.
+        Usa ``POST /pages/{id}/move`` (versão ``2025-09-03``), o endpoint de
+        mover do Notion. **Não** usa ``PATCH /pages/{id}`` com ``parent``:
+        medido em 2026-09-27, esse ``PATCH`` responde 200 e ignora o campo
+        (``parent`` e ``last_edited_time`` relidos inalterados), e a versão
+        anterior deste método reportava um movimento que não acontecia.
 
-        Observação importante: mover uma página que **contém databases** é
-        aceito pela API (``200``) mas silenciosamente ignorado; nesse caso, mova
-        as databases uma a uma com :meth:`mover_database` e descarte a página
-        vazia.
+        Depois do pedido a página é **relida** e o ``parent`` comparado com o
+        destino; se não bater, sobe :class:`MovimentoNaoAplicadoError`. Quando
+        o destino é um data source, a releitura (versão padrão) mostra o pai
+        como ``{"type": "database_id", ...}`` — o database dono da fonte —, e
+        é isso que se compara.
+
+        Mover uma linha para **outro** database muda colunas, não só o lugar
+        (medido em 2026-09-27): o Notion acrescenta ao schema do destino as
+        colunas da origem que não existem lá e descarta valores que conflitam
+        (opção inexistente, tipo diferente) e relações. Para prever isso antes,
+        use :func:`notion_starter.services.movimentacao.prever_movimento`.
 
         Args:
             page_id: ID da página a mover.
-            novo_pai_id: ID do novo pai (página ou database).
-            tipo_pai: ``"page_id"`` (padrão) ou ``"database_id"``.
+            novo_pai_id: ID do novo pai.
+            tipo_pai: ``"page_id"`` (padrão), ``"database_id"`` (resolve o único
+                data source do database, ver :meth:`resolver_data_source`) ou
+                ``"data_source_id"`` (a fonte já escolhida).
 
         Returns:
-            A resposta JSON da página atualizada.
+            A página **relida** depois do movimento (com o ``parent`` novo).
 
         Raises:
             NotionConfigurationError: Se algum identificador for inválido.
             ValueError: Se ``tipo_pai`` não for reconhecido.
+            FonteDeDadosIndefinidaError: Destino ``database_id`` com zero ou
+                várias fontes.
+            MovimentoNaoAplicadoError: A releitura mostra outro pai.
+            NotionHTTPError: Se a API responder com 4xx/5xx.
         """
 
         limpo = _validar_identificador(page_id, "page_id")
         pai_limpo = _validar_identificador(novo_pai_id, "novo_pai_id")
-        if tipo_pai not in ("page_id", "database_id"):
-            raise ValueError("tipo_pai deve ser 'page_id' ou 'database_id'.")
-        payload = {"parent": {"type": tipo_pai, tipo_pai: pai_limpo}}
-        return self._request_json(
-            method="PATCH",
-            path=f"/pages/{limpo}",
-            payload=payload,
+        if tipo_pai not in TIPOS_PAI_DE_MOVIMENTO:
+            raise ValueError(
+                "tipo_pai deve ser " + ", ".join(repr(t) for t in TIPOS_PAI_DE_MOVIMENTO) + "."
+            )
+
+        esperados: set[str]
+        if tipo_pai == "page_id":
+            parent: MovePageParentPayload = {"type": "page_id", "page_id": pai_limpo}
+            esperados = {chave_de_id(pai_limpo)}
+        else:
+            if tipo_pai == "database_id":
+                fonte_id = self.resolver_data_source(pai_limpo)
+                database_dono = pai_limpo
+            else:
+                fonte_id = pai_limpo
+                dono = self.get_data_source(fonte_id).get("parent") or {}
+                database_dono = str(dono.get("database_id") or "")
+            parent = {"type": "data_source_id", "data_source_id": fonte_id}
+            esperados = {chave_de_id(fonte_id)} | (
+                {chave_de_id(database_dono)} if database_dono else set()
+            )
+
+        payload: MovePagePayload = {"parent": parent}
+        self._request_json(
+            method="POST",
+            path=f"/pages/{limpo}/move",
+            payload=dict(payload),
+            # Repetir o mesmo movimento leva ao mesmo lugar: é idempotente.
             idempotente=True,
+            version=NOTION_DATA_SOURCE_VERSION,
         )
+
+        relida = self.obter_pagina(limpo)
+        pai_atual = relida.get("parent") if isinstance(relida.get("parent"), dict) else {}
+        tipo_atual = str(pai_atual.get("type") or "")
+        if chave_de_id(str(pai_atual.get(tipo_atual) or "")) not in esperados:
+            raise MovimentoNaoAplicadoError(limpo, dict(parent), pai_atual)
+        return relida
 
     def mover_database(self, database_id: str, novo_pai_id: str) -> dict[str, Any]:
         """Re-parenteia (move) um database para outra página.

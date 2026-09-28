@@ -299,11 +299,18 @@ def test_buscar_rejeita_page_size_invalido():
 
 @responses.activate
 def test_mover_pagina_envia_novo_parent():
+    # O PATCH com parent é ignorado pelo Notion (medido em 2026-09-27); o
+    # movimento vai pelo POST /move e é conferido na releitura.
     responses.add(
-        responses.PATCH,
-        f"{NOTION_BASE_URL}/pages/pag1",
+        responses.POST,
+        f"{NOTION_BASE_URL}/pages/pag1/move",
         json={"id": "pag1"},
         status=200,
+    )
+    responses.add(
+        responses.GET,
+        f"{NOTION_BASE_URL}/pages/pag1",
+        json={"id": "pag1", "parent": {"type": "page_id", "page_id": "destino1"}},
     )
     client = criar_client()
     client.mover_pagina("pag1", "destino1")
@@ -316,11 +323,21 @@ def test_mover_pagina_envia_novo_parent():
 @responses.activate
 def test_mover_pagina_aceita_database_como_pai():
     responses.add(
-        responses.PATCH, f"{NOTION_BASE_URL}/pages/pag1", json={"id": "pag1"}, status=200
+        responses.GET,
+        f"{NOTION_BASE_URL}/databases/db1",
+        json={"id": "db1", "data_sources": [{"id": "ds1", "name": "Fonte"}]},
+    )
+    responses.add(
+        responses.POST, f"{NOTION_BASE_URL}/pages/pag1/move", json={"id": "pag1"}, status=200
+    )
+    responses.add(
+        responses.GET,
+        f"{NOTION_BASE_URL}/pages/pag1",
+        json={"id": "pag1", "parent": {"type": "database_id", "database_id": "db1"}},
     )
     client = criar_client()
     client.mover_pagina("pag1", "db1", tipo_pai="database_id")
-    assert b'"database_id"' in responses.calls[0].request.body
+    assert b'"data_source_id"' in responses.calls[1].request.body
 
 
 def test_mover_pagina_tipo_pai_invalido_levanta():
